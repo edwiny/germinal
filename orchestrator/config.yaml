@@ -1,0 +1,59 @@
+models:
+  default_local: "ollama/llama3.2"
+  default_remote: "anthropic/claude-sonnet-4-6"
+  routing:
+    # Use local model for lightweight tasks, remote for complex reasoning.
+    local_for: ["summarize", "classify", "reflect"]
+    remote_for: ["dev", "research", "plan"]
+
+paths:
+  # Paths are evaluated relative to the orchestrator/ working directory.
+  # The parent directory is included so agents can read ARCHITECTURE.md
+  # and CLAUDE.md at the project root.
+  allowed_read:
+    - "./"
+    - "../"
+  allowed_write:
+    - "./"
+  db: "./storage/orchestrator.db"
+  logs: "./logs/"
+
+tools:
+  shell_allowlist:
+    - "pytest"
+    - "python"
+    - "git"
+    - "ls"
+    - "cat"
+    - "grep"
+
+agents:
+  task_agent:
+    allowed_tools:
+      - "read_file"
+      - "notify_user"
+    max_iterations: 10
+    approval_required_for: ["high"]
+  dev_agent:
+    allowed_tools:
+      - "read_file"
+      - "write_file"
+      - "git_status"
+      - "git_commit"
+      - "git_branch"
+      - "git_rollback"
+      - "run_tests"
+      - "notify_user"
+      - "read_task_list"
+      - "write_task"
+    max_iterations: 10
+    approval_required_for: ["high"]
+
+approval:
+  # Terminal mode: blocks on stdin prompt. Replaced in later phases.
+  mode: "terminal"
+
+context:
+  recent_buffer_tokens: 4000
+  summary_tokens: 1000
+  brief_tokens: 500

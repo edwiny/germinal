@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Database and logs
+orchestrator/storage/*.db
+orchestrator/logs/
+
+# Editor
+.DS_Store
+*.swp

@@ -1,0 +1,4 @@
+litellm>=1.40.0
+jsonschema>=4.0.0
+pyyaml>=6.0
+pytest>=7.0
