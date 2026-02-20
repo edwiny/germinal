@@ -75,6 +75,14 @@ debug:
   print_prompts: true
 
 context:
+  # when the combined context history exceeds these many tokens (currently 1 token == 4 characters) then invoke
+  # a llm call to summarise the history, save it in the projects table in the db, and wipe the context history.
   recent_buffer_tokens: 4000
   summary_tokens: 1000
   brief_tokens: 500
+
+projects:
+  # All events without an explicit project_id accumulate history here.
+  # Set to null to disable automatic project assignment.
+  default_project_id: "default"
+  default_project_name: "Default Project"

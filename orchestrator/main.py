@@ -15,6 +15,7 @@ from adapters.timer import TimerAdapter
 from agents import task_agent as task_agent_mod
 from core.agent_invoker import invoke
 from core.approval_gate import request_approval
+from core.context_manager import ensure_project
 from core.event_queue import (
     complete_event,
     dequeue_next_event,
@@ -214,6 +215,17 @@ def main() -> None:
             complete_event(db_path, event_id)
             continue
 
+        # Resolve project_id: event payload takes priority, then config default.
+        project_id = event.get("project_id") or config.get("projects", {}).get(
+            "default_project_id"
+        )
+        if project_id:
+            ensure_project(
+                project_id,
+                config.get("projects", {}).get("default_project_name", project_id),
+                db_path,
+            )
+
         agent_type = routing["agent_type"]
         model, api_key = _select_model(config, routing["model_key"])
         agent_reg = _agent_registry(agent_type, full_registry, config)
@@ -226,11 +238,13 @@ def main() -> None:
                 model=model,
                 api_key=api_key,
                 registry=agent_reg,
+                project_id=project_id,
                 event_id=event_id,
                 db_path=db_path,
                 debug_print_prompts=debug,
                 approval_gate=approval_gate,
                 max_iterations=max_iter,
+                config=config,
             )
             print(
                 f"[event] done — invocation={result['invocation_id']} "

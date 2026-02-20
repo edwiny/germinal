@@ -16,12 +16,15 @@ This is the first file any agent reads before modifying the codebase.
 
 ## Current Status
 
-**Phase 1 — COMPLETE**
+**Phase 2 — COMPLETE**
 
-`python main.py` runs an event loop: the timer adapter pushes tick events,
-the router dispatches them to `task_agent`, and the invoker drives tool
-execution with a human-in-the-loop approval gate for high-risk tools.
-All 31 unit and integration tests pass.
+Three-tier context management is live. Every event is now assigned to a project
+(defaulting to the `"default"` project from `config.yaml`). After each invocation
+`invoke()` appends the user task and agent response to `history`, then triggers
+`maybe_summarise()` if the buffer is over budget. The next invocation receives
+`[BRIEF] / [SUMMARY] / [RECENT HISTORY]` injected as a user message before the
+task description. RAG / vector retrieval is deferred to a later phase.
+All 47 unit and integration tests pass.
 
 ---
 
@@ -37,15 +40,27 @@ SIGINT and SIGTERM trigger a graceful shutdown after the current event finishes.
 System configuration: model routing, allowed filesystem paths, tool shell
 allowlist, per-agent tool permissions, approval mode, context token budgets.
 
+### `core/context_manager.py`
+Three-tier project memory. Provides:
+- `ensure_project()` — idempotent project row creation (called before every invoke).
+- `assemble_context()` — reads brief, summary, and recent history from the DB and
+  formats them into a context block injected before the task description.
+- `append_to_history()` — writes one history row (called twice per invocation).
+- `maybe_summarise()` — compresses old history into `projects.summary` via a model
+  call when the accumulated token count exceeds the configured budget.
+
 ### `core/agent_invoker.py`
 The execution engine. Given a task description, it:
 1. Builds the system prompt via `agents/base_prompt.py`
-2. Calls the model through LiteLLM
-3. Parses `<tool_call>...</tool_call>` blocks from the response
-4. For high-risk tools, calls the injected `approval_gate` callable before execution
-5. Executes approved tool calls through the registry
-6. Feeds results back into the conversation and loops
-7. Logs the complete invocation record (prompt, response, all tool calls) to SQLite
+2. If `project_id + db_path + config` are all set, injects the assembled context
+   (brief / summary / recent history) as a user message before the task
+3. Calls the model through LiteLLM
+4. Parses `<tool_call>...</tool_call>` blocks from the response
+5. For high-risk tools, calls the injected `approval_gate` callable before execution
+6. Executes approved tool calls through the registry
+7. Feeds results back into the conversation and loops
+8. Appends task + response to `history` and triggers summarisation if over budget
+9. Logs the complete invocation record (prompt, response, all tool calls) to SQLite
 
 ### `core/approval_gate.py` [SAFETY-CRITICAL]
 Terminal-based human approval for high-risk tool calls. Writes the approval
@@ -128,6 +143,11 @@ UnroutableEvent for unmatched events.
 ### `tests/test_tool_registry.py`
 Unit tests: parameter validation, unknown tool error, schema_for_agent format.
 
+### `tests/test_context_manager.py`
+Unit tests: ensure_project idempotency, assemble_context empty/brief/summary/history
+paths, token-budget truncation, append_to_history role preservation, maybe_summarise
+skip-when-within-budget and trigger-with-update paths (LiteLLM mocked).
+
 ### `tests/integration/test_end_to_end.py`
 Integration test: real tool execution (read_file + notify_user), LiteLLM
 mocked, full pipeline verified against a real temp DB.
@@ -154,12 +174,15 @@ Any change requires human review.
 
 ---
 
-## Known Limitations (Phase 1)
+## Known Limitations (Phase 2)
 
-- No context management: no project brief/summary/history; each invocation is stateless.
+- No RAG / vector retrieval: context is limited to brief + summary + recent buffer.
+  Phase 3 will add sqlite-vec or ChromaDB for semantic retrieval.
 - Approval gate is terminal-only: unattended runs auto-deny all high-risk calls.
-- Single-writer SQLite: fine for Phase 1 event rates; revisit if multi-host needed.
+- Single-writer SQLite: fine for current event rates; revisit if multi-host needed.
 - LiteLLM Ollama calls require a running local Ollama server.
+- Summarisation uses the same model as the main invocation; a cheaper local model
+  would be more efficient for this task. Revisit when model routing is expanded.
 - No reflection or task backlog automation (Phase 4).
 
 ---
@@ -176,10 +199,11 @@ call, and the invocation appears in the DB.
 Deliverables: `event_queue.py`, `router.py`, `timer.py` adapter, rewritten
 event-loop `main.py`, `approval_gate.py`, full MVP tool set, 31 passing tests.
 
-### Phase 2 — Project Context & Multi-Project Support
+### Phase 2 — Project Context & Multi-Project Support ✓ COMPLETE
 
-Deliverables: `context_manager.py` (three-tier), `vector.py` (sqlite-vec or
-ChromaDB), per-project history, summarisation trigger.
+Deliverables: `context_manager.py` (three-tier brief/summary/recent history),
+per-project history accumulated across invocations, summarisation trigger,
+`config.yaml` default project, 47 passing tests. Vector retrieval deferred.
 
 ### Phase 3 — Email & External Event Adapters
 
@@ -253,6 +277,35 @@ config without touching invocation code.
   is needed that LiteLLM does not support, a thin adapter in `tools/model.py`
   can wrap it.
 - LiteLLM version pinning matters; check the changelog on upgrades.
+
+---
+
+### DECISION — Deferred RAG / vector retrieval to Phase 3
+Date: 2026-02-20
+Status: active
+
+**Decision:** Phase 2 ships three-tier context (brief, summary, recent buffer)
+without any vector embedding or semantic retrieval step.
+
+**Reasoning:** The three-tier model delivers meaningful memory without adding
+a new dependency (sqlite-vec or ChromaDB). For the expected project sizes in
+Phase 2, summary + recent buffer covers all reasonable context needs. Adding
+a vector store prematurely would complicate the setup and testing with no
+concrete benefit yet.
+
+**Alternatives considered:**
+- sqlite-vec: promising but still early-stage; API may change.
+- ChromaDB: adds a server process or persistent client; operational overhead.
+- No summarisation (raw truncation only): loses older context completely;
+  summarisation is cheap enough to be worth having from day one.
+
+**Consequences:**
+- Context is limited to what fits in brief + summary + recent buffer.
+- If a project's history grows faster than summarisation can compress it,
+  oldest events are permanently lost (not retrievable by RAG). This is
+  acceptable for Phase 2 scope.
+- Phase 3 can add vector retrieval as an additive change without touching
+  the existing three-tier logic.
 
 ---
 

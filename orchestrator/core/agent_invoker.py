@@ -13,6 +13,7 @@ from typing import Callable
 import litellm
 
 from agents.base_prompt import build_system_prompt
+from core.context_manager import append_to_history, assemble_context, maybe_summarise
 from storage.db import get_conn
 from tools.registry import ToolRegistry
 
@@ -43,6 +44,7 @@ def invoke(
     db_path: str | None = None,
     debug_print_prompts: bool = False,
     approval_gate: Callable | None = None,
+    config: dict | None = None,
 ) -> dict:
     """
     Run a single agent invocation to completion.
@@ -61,10 +63,12 @@ def invoke(
     tool_calls_log: list[dict] = []
 
     system_prompt = build_system_prompt(registry.schema_for_agent())
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": task_description},
-    ]
+    messages = [{"role": "system", "content": system_prompt}]
+    if project_id and db_path and config:
+        ctx = assemble_context(project_id, db_path, config)
+        if ctx:
+            messages.append({"role": "user", "content": ctx})
+    messages.append({"role": "user", "content": task_description})
 
     _db_insert_invocation(
         invocation_id=invocation_id,
@@ -124,6 +128,15 @@ def invoke(
         # iteration cap fires. Raising here would lose the partial DB record.
         final_response = "Iteration cap reached without task completion."
         status = "failed"
+
+    # Persist the user task and agent response to history so the next
+    # invocation can see what happened this time. Summarisation is triggered
+    # here rather than in main.py so it is always called, even in tests that
+    # invoke() directly.
+    if project_id and db_path and config:
+        append_to_history(project_id, "user", task_description, db_path)
+        append_to_history(project_id, "agent", final_response, db_path)
+        maybe_summarise(project_id, db_path, model, api_key, config)
 
     _db_finish_invocation(
         invocation_id=invocation_id,
