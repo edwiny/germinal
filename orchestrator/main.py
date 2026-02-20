@@ -5,8 +5,10 @@
 #               and agents/*. This is the only place all subsystems are
 #               assembled — individual modules know nothing about each other.
 
+import logging
 import os
 import signal
+import sys
 import time
 
 import yaml
@@ -47,6 +49,17 @@ _IDLE_SLEEP_SECONDS = 0.5
 # Default timer tick interval in seconds. Keep short during bootstrap so
 # there is something to observe quickly; tune upward in production.
 _TIMER_INTERVAL_SECONDS = 60
+
+
+def setup_logging(level: str) -> None:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(
+        logging.Formatter(
+            fmt="%(asctime)s.%(msecs)03d %(levelname)-7s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    logging.basicConfig(level=level.upper(), handlers=[handler])
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -156,24 +169,25 @@ def _agent_registry(agent_type: str, full_registry: ToolRegistry, config: dict) 
 
 def main() -> None:
     config = load_config()
+    setup_logging(config.get("logging", {}).get("level", "INFO"))
+
+    logger_main = logging.getLogger("main")
+    logger_event = logging.getLogger("event")
+
     db_path = config["paths"]["db"]
-    debug = config.get("debug", {}).get("print_prompts", False)
 
     init_db(db_path)
 
     stale = reset_stale_events(db_path)
     if stale:
-        print(f"[startup] Reset {stale} stale event(s) to 'pending'.", flush=True)
+        logger_main.info("Reset %d stale event(s) to 'pending'.", stale)
 
     full_registry = build_full_registry(config, db_path)
     approval_gate = _make_approval_gate(db_path)
 
     timer = TimerAdapter(db_path=db_path, interval_seconds=_TIMER_INTERVAL_SECONDS)
     timer.start()
-    print(
-        f"[startup] Timer adapter started ({_TIMER_INTERVAL_SECONDS}s interval).",
-        flush=True,
-    )
+    logger_main.info("Timer adapter started (%ds interval).", _TIMER_INTERVAL_SECONDS)
 
     # Graceful shutdown: flip _running on SIGINT / SIGTERM so the loop exits
     # cleanly after the current event finishes. The timer thread is a daemon
@@ -181,14 +195,13 @@ def main() -> None:
     _running = [True]
 
     def _handle_signal(sig, frame):
-        print(f"\n[shutdown] Signal {sig} received — stopping after current event.",
-              flush=True)
+        logger_main.info("Signal %s received — stopping after current event.", sig)
         _running[0] = False
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    print("[startup] Event loop running. Press Ctrl-C to stop.", flush=True)
+    logger_main.info("Event loop running. Press Ctrl-C to stop.")
 
     while _running[0]:
         event = dequeue_next_event(db_path)
@@ -197,21 +210,20 @@ def main() -> None:
             continue
 
         event_id = event["id"]
-        print(
-            f"[event] source={event['source']!r} type={event['type']!r} id={event_id}",
-            flush=True,
+        logger_event.info(
+            "source=%r type=%r id=%s", event["source"], event["type"], event_id
         )
 
         try:
             routing = route_event(event, config)
         except UnroutableEvent as exc:
-            print(f"[event] Unroutable — {exc}", flush=True)
+            logger_event.warning("Unroutable — %s", exc)
             fail_event(db_path, event_id)
             continue
 
         preflight = routing.get("preflight")
         if preflight is not None and not preflight():
-            print(f"[event] preflight skipped — no action needed", flush=True)
+            logger_event.info("preflight skipped — no action needed")
             complete_event(db_path, event_id)
             continue
 
@@ -241,24 +253,22 @@ def main() -> None:
                 project_id=project_id,
                 event_id=event_id,
                 db_path=db_path,
-                debug_print_prompts=debug,
                 approval_gate=approval_gate,
                 max_iterations=max_iter,
                 config=config,
             )
-            print(
-                f"[event] done — invocation={result['invocation_id']} "
-                f"status={result['status']} tools={len(result['tool_calls'])}",
-                flush=True,
+            logger_event.info(
+                "done — invocation=%s status=%s tools=%d",
+                result["invocation_id"], result["status"], len(result["tool_calls"]),
             )
             complete_event(db_path, event_id)
         except Exception as exc:
-            print(f"[event] Invocation raised unexpectedly: {exc}", flush=True)
+            logger_event.error("Invocation raised unexpectedly: %s", exc)
             fail_event(db_path, event_id)
 
     timer.stop()
     timer.join(timeout=5.0)
-    print("[shutdown] Done.", flush=True)
+    logger_main.info("Done.")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 # Verifies that invoker + tool registry + DB form a working pipeline
 # without mocking the tool layer (only LiteLLM is mocked).
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,7 +35,7 @@ def _mock_response(content: str) -> MagicMock:
     return r
 
 
-def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, capsys):
+def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, caplog):
     """
     Full pipeline: agent reads a real file, notifies user, invocation in DB.
     LiteLLM is mocked; all tool execution is real.
@@ -56,7 +57,7 @@ def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, capsys):
     )
     done_response = _mock_response("Task complete.")
 
-    with patch(
+    with caplog.at_level(logging.INFO, logger="notify"), patch(
         "core.agent_invoker.litellm.completion",
         side_effect=[read_response, notify_response, done_response],
     ):
@@ -76,9 +77,8 @@ def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, capsys):
     assert read_tc["tool"] == "read_file"
     assert read_tc["result"]["content"] == "This is the test file content."
 
-    # Notification was delivered (printed to stderr).
-    captured = capsys.readouterr()
-    assert "File read successfully" in captured.err
+    # Notification was delivered via the logger.
+    assert "File read successfully" in caplog.text
 
     # Invocation row is in the DB with status done.
     with get_conn(tmp_db) as conn:

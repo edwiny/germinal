@@ -5,6 +5,7 @@
 #               Called by main.py's event loop; approval_gate.py injected as callable.
 
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -12,10 +13,16 @@ from typing import Callable
 
 import litellm
 
+
+logger = logging.getLogger("agent_invoker")
+
 from agents.base_prompt import build_system_prompt
 from core.context_manager import append_to_history, assemble_context, maybe_summarise
 from storage.db import get_conn
 from tools.registry import ToolRegistry
+
+litellm.suppress_debug_info = True
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
 # [INVARIANT] Iteration cap prevents runaway loops. An agent that needs more
 # than DEFAULT_MAX_ITERATIONS for a sensible task is almost certainly stuck.
@@ -42,7 +49,6 @@ def invoke(
     event_id: str | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     db_path: str | None = None,
-    debug_print_prompts: bool = False,
     approval_gate: Callable | None = None,
     config: dict | None = None,
 ) -> dict:
@@ -83,9 +89,8 @@ def invoke(
     final_response = ""
     status = "failed"
 
-    for _ in range(max_iterations):
-        if debug_print_prompts:
-            _print_messages(messages)
+    for iteration in range(max_iterations):
+        _log_messages(messages, iteration)
         raw = litellm.completion(model=model, messages=messages, api_key=api_key)
         assistant_text: str = raw.choices[0].message.content or ""
         messages.append({"role": "assistant", "content": assistant_text})
@@ -233,15 +238,15 @@ def _run_tool(
 # ---------------------------------------------------------------------------
 
 
-def _print_messages(messages: list[dict]) -> None:
-    print("\n" + "─" * 60)
-    print(f"PROMPT  ({len(messages)} message(s))")
-    print("─" * 60)
+def _log_messages(messages: list[dict], iteration: int) -> None:
+    # Only emitted at DEBUG level — gated by logging config, no flag needed.
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    logger.debug("Iteration %d — sending %d message(s) to model", iteration + 1, len(messages))
     for msg in messages:
-        role = msg["role"].upper()
-        content = msg["content"] or ""
-        print(f"\n[{role}]\n{content}")
-    print("─" * 60 + "\n")
+        role = msg["role"]
+        content = (msg["content"] or "").strip()
+        logger.debug("[%s] %s", role, content)
 
 
 # ---------------------------------------------------------------------------

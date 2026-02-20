@@ -3,9 +3,11 @@
 #               Phase 0 transport is stdout/stderr. Later phases replace
 #               the transport without changing the tool interface.
 
-import sys
+import logging
 
 from tools.registry import Tool
+
+logger = logging.getLogger("notify")
 
 
 def make_notify_user_tool() -> Tool:
@@ -14,9 +16,13 @@ def make_notify_user_tool() -> Tool:
     def execute(params: dict) -> dict:
         message = params["message"]
         level = params.get("level", "info")
-        # Print to stderr so notifications don't mix with structured stdout
-        # output. Later phases will replace this with a real channel.
-        print(f"[NOTIFY:{level.upper()}] {message}", file=sys.stderr, flush=True)
+        # Route notification to the appropriate log level so it surfaces
+        # correctly in the log stream. Later phases replace this with a
+        # real delivery channel without changing the tool interface.
+        log_fn = {"warning": logger.warning, "error": logger.error}.get(
+            level, logger.info
+        )
+        log_fn("[NOTIFY] %s", message)
         return {"delivered": True, "channel": "terminal"}
 
     return Tool(

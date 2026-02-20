@@ -11,11 +11,13 @@
 # is enqueued. For sub-hourly scheduling, include the minute in the payload
 # so each tick gets a unique ID.
 
-import sys
+import logging
 import threading
 from datetime import datetime, timezone
 
 from core.event_queue import push_event
+
+logger = logging.getLogger("timer")
 
 
 class TimerAdapter:
@@ -96,6 +98,5 @@ class TimerAdapter:
                 priority=8,  # Timer ticks are low-urgency background work.
             )
         except Exception as exc:
-            # Log to stderr but keep the thread alive. A transient DB error
-            # should not kill the adapter.
-            print(f"[timer-adapter] push_event failed: {exc}", file=sys.stderr)
+            # Log but keep the thread alive. A transient DB error should not kill the adapter.
+            logger.error("push_event failed: %s", exc)

@@ -13,11 +13,14 @@
 # False (denied), and the caller treats the result the same way regardless.
 
 import json
+import logging
 import sys
 import uuid
 from datetime import datetime, timezone
 
 from storage.db import get_conn
+
+logger = logging.getLogger("approval_gate")
 
 
 def request_approval(
@@ -53,12 +56,11 @@ def request_approval(
     # high-risk action on behalf of the human.
     if not sys.stdin.isatty():
         _db_record_response(approval_id, "denied", db_path)
-        print(
-            f"\n[APPROVAL GATE] Non-interactive stdin detected — auto-denying {tool_name!r}.",
-            flush=True,
-        )
+        logger.warning("Non-interactive stdin detected — auto-denying %r.", tool_name)
         return False
 
+    # Print the full formatted prompt directly so the human sees it clearly
+    # on the terminal without a logger prefix cluttering the approval block.
     print(prompt_text, flush=True)
 
     try:

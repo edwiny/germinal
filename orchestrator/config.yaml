@@ -69,10 +69,9 @@ approval:
   # Terminal mode: blocks on stdin prompt. Replaced in later phases.
   mode: "terminal"
 
-debug:
-  # Print every message array sent to the model. Useful during development;
-  # disable in production to avoid leaking context to stdout.
-  print_prompts: true
+logging:
+  # DEBUG emits full prompt dumps; INFO is the recommended production level.
+  level: INFO
 
 context:
   # when the combined context history exceeds these many tokens (currently 1 token == 4 characters) then invoke
