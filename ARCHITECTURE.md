@@ -16,19 +16,22 @@ This is the first file any agent reads before modifying the codebase.
 
 ## Current Status
 
-**Phase 0 — COMPLETE**
+**Phase 1 — COMPLETE**
 
-`python main.py` runs, assembles a prompt, calls the configured model via
-LiteLLM, executes tool calls, and writes the full invocation record to SQLite.
+`python main.py` runs an event loop: the timer adapter pushes tick events,
+the router dispatches them to `task_agent`, and the invoker drives tool
+execution with a human-in-the-loop approval gate for high-risk tools.
+All 31 unit and integration tests pass.
 
 ---
 
 ## Module Map
 
 ### `main.py`
-Entry point for Phase 0. Loads `config.yaml`, initialises the DB, builds the
-tool registry, and runs a single hardcoded task ("read ARCHITECTURE.md and
-summarise it"). Replaced by an event loop in Phase 1.
+Phase 1 event loop entry point. Loads `config.yaml`, initialises the DB,
+registers all Phase 1 tools, starts the timer adapter, resets any stale events
+from a previous crash, and loops: dequeue → route → invoke → complete/fail.
+SIGINT and SIGTERM trigger a graceful shutdown after the current event finishes.
 
 ### `config.yaml`
 System configuration: model routing, allowed filesystem paths, tool shell
@@ -39,14 +42,42 @@ The execution engine. Given a task description, it:
 1. Builds the system prompt via `agents/base_prompt.py`
 2. Calls the model through LiteLLM
 3. Parses `<tool_call>...</tool_call>` blocks from the response
-4. Executes each tool call through the registry
-5. Feeds results back into the conversation and loops
-6. Logs the complete invocation record (prompt, response, all tool calls) to SQLite
+4. For high-risk tools, calls the injected `approval_gate` callable before execution
+5. Executes approved tool calls through the registry
+6. Feeds results back into the conversation and loops
+7. Logs the complete invocation record (prompt, response, all tool calls) to SQLite
+
+### `core/approval_gate.py` [SAFETY-CRITICAL]
+Terminal-based human approval for high-risk tool calls. Writes the approval
+request to the DB before prompting (audit trail). Auto-denies when stdin is
+not a TTY (safe default for unattended runs). Transport is terminal in Phase 1;
+later phases replace the transport without changing the interface.
+
+### `core/event_queue.py`
+Persistent SQLite-backed queue. `push_event()` uses `INSERT OR IGNORE` with a
+hash-based ID for deduplication. `dequeue_next_event()` uses a two-step
+read-then-write so the approval gate has a cancellation window between
+status transitions. `reset_stale_events()` recovers from crashes at startup.
+
+### `core/router.py`
+Rules-based dispatcher. Given an event, returns agent type, model key, and
+task description. Template expansion supports `{payload[key]}` references only
+(no eval, no Jinja). Unknown events raise `UnroutableEvent`.
 
 ### `agents/base_prompt.py`
 Constructs the system prompt: base agent instructions + tool catalogue as JSON.
 Tool schemas are injected as JSON (not prose) so smaller local models have
 exact parameter names and types to work with.
+
+### `agents/task_agent.py`
+Defines `AGENT_TYPE = "task_agent"` and `make_registry()`, which filters the
+full tool registry down to the tools the task_agent is permitted to call
+(as configured in `config.yaml`).
+
+### `adapters/timer.py`
+Background daemon thread that pushes a `tick` event every `interval_seconds`.
+Self-healing: push failures are logged to stderr; the thread keeps running.
+Each tick includes the current minute in the payload for distinct event IDs.
 
 ### `tools/registry.py` [SAFETY-CRITICAL]
 Defines the `Tool` dataclass and `ToolRegistry`. Every tool call goes through
@@ -54,13 +85,24 @@ Defines the `Tool` dataclass and `ToolRegistry`. Every tool call goes through
 dispatching to the implementation. This is the sole validation checkpoint.
 
 ### `tools/filesystem.py` [SAFETY-CRITICAL]
-Implements `make_read_file_tool()`. Path allowlist enforcement lives here.
-`_is_allowed()` resolves both the requested path and each allowed path to
-absolute form before comparing, defeating directory traversal attempts.
+Implements `read_file`, `write_file`, and `list_directory`. Path allowlist
+enforcement via `_is_allowed()` uses `.resolve()` and `.relative_to()` to
+defeat directory traversal attacks.
+
+### `tools/shell.py` [SAFETY-CRITICAL]
+Implements `shell_run` (allowlisted commands, `shell=False`) and `run_tests`
+(fixed pytest command). The allowlist check and `shell=False` are the two
+enforcement points for preventing arbitrary command injection.
+
+### `tools/git.py`
+Implements `git_status`, `git_commit`, `git_branch`, `git_rollback`. All use
+`subprocess.run(..., shell=False)` with fixed argv arrays.
+
+### `tools/tasks.py`
+Implements `read_task_list` and `write_task` over the `tasks` DB table.
 
 ### `tools/notify.py`
-Implements `make_notify_user_tool()`. Phase 0 transport is stderr. The tool
-interface is stable; only the transport changes in later phases.
+Implements `notify_user`. Phase 1 transport is stderr. Interface is stable.
 
 ### `storage/schema.sql`
 All table definitions. Safe to re-run (uses `IF NOT EXISTS`). Tables:
@@ -72,9 +114,19 @@ that yields a WAL-mode SQLite connection, commits on clean exit, rolls back on
 exception. WAL mode is set here and nowhere else.
 
 ### `tests/test_agent_invoker.py`
-Unit tests for the invoker: invocation row written, tool call executed and
-logged, unknown tool handled gracefully, iteration cap fires cleanly. LiteLLM
-is mocked; DB is real (temp file).
+Unit tests: invocation written to DB, tool call executed and logged, unknown
+tool handled gracefully, iteration cap fires cleanly.
+
+### `tests/test_event_queue.py`
+Unit tests: push dedup, dequeue ordering, lifecycle transitions,
+reset_stale_events recovery.
+
+### `tests/test_router.py`
+Unit tests: timer tick routing, user message routing, template expansion,
+UnroutableEvent for unmatched events.
+
+### `tests/test_tool_registry.py`
+Unit tests: parameter validation, unknown tool error, schema_for_agent format.
 
 ### `tests/integration/test_end_to_end.py`
 Integration test: real tool execution (read_file + notify_user), LiteLLM
@@ -94,21 +146,21 @@ Runs `pytest tests/ -v` from the project root.
 |---|---|
 | `tools/registry.py` | Parameter validation before every tool execution |
 | `tools/filesystem.py` | Path allowlist enforcement for all file access |
-| `core/approval_gate.py` | Human-in-the-loop gate (Phase 1) |
-| `tools/shell.py` | Shell command allowlist enforcement (Phase 1) |
+| `core/approval_gate.py` | Human-in-the-loop gate for high-risk tool calls |
+| `tools/shell.py` | Shell command allowlist and shell=False enforcement |
 
 Do not modify safety-critical files as part of autonomous improvement tasks.
 Any change requires human review.
 
 ---
 
-## Known Limitations (Phase 0)
+## Known Limitations (Phase 1)
 
-- No event queue: tasks are hardcoded in `main.py`.
-- No approval gate: all tool calls auto-execute regardless of risk level.
-- No context management: no project brief/summary/history; each run is stateless.
-- LiteLLM Ollama calls require a running local Ollama server with `llama3.2` pulled.
-- `allowed_write` is configured but `write_file` is not implemented until Phase 1.
+- No context management: no project brief/summary/history; each invocation is stateless.
+- Approval gate is terminal-only: unattended runs auto-deny all high-risk calls.
+- Single-writer SQLite: fine for Phase 1 event rates; revisit if multi-host needed.
+- LiteLLM Ollama calls require a running local Ollama server.
+- No reflection or task backlog automation (Phase 4).
 
 ---
 
@@ -119,10 +171,10 @@ Any change requires human review.
 **Done when:** `python main.py` runs, calls Ollama, executes at least one tool
 call, and the invocation appears in the DB.
 
-### Phase 1 — Event Queue & Router *(next)*
+### Phase 1 — Event Queue & Router ✓ COMPLETE
 
 Deliverables: `event_queue.py`, `router.py`, `timer.py` adapter, rewritten
-event-loop `main.py`, `approval_gate.py`, full MVP tool set, integration test.
+event-loop `main.py`, `approval_gate.py`, full MVP tool set, 31 passing tests.
 
 ### Phase 2 — Project Context & Multi-Project Support
 

@@ -4,13 +4,14 @@
 # Do not weaken or remove the path check. Do not modify as part of
 # autonomous improvement tasks.
 #
-# Purpose: Filesystem tools — read_file (Phase 0). write_file added Phase 1+.
+# Purpose: Filesystem tools — read_file, write_file, list_directory.
 # Relationships: Registers tools into tools/registry.py via make_* factories;
 #               allowed paths come from config.yaml loaded in main.py.
 
 from pathlib import Path
 
 from tools.registry import Tool
+
 
 
 def _is_allowed(path: str, allowed_paths: list[str]) -> bool:
@@ -62,6 +63,97 @@ def make_read_file_tool(allowed_paths: list[str]) -> Tool:
                 "path": {
                     "type": "string",
                     "description": "Path to the file to read.",
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+        risk_level="low",
+        allowed_agents=["task_agent", "dev_agent"],
+        _execute=execute,
+    )
+
+
+def make_write_file_tool(allowed_paths: list[str]) -> Tool:
+    """Return a write_file Tool restricted to the given allowed_paths."""
+
+    def execute(params: dict) -> dict:
+        path = params["path"]
+        if not _is_allowed(path, allowed_paths):
+            return {"error": f"Path not in allowed_write list: {path!r}"}
+        try:
+            p = Path(path)
+            # Create parent directories if they do not exist, matching the
+            # behaviour a human would expect when writing to a new path.
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(params["content"], encoding="utf-8")
+            return {"success": True, "path": path, "bytes_written": len(params["content"])}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    return Tool(
+        name="write_file",
+        description=(
+            "Write text content to a file. Creates parent directories as needed. "
+            "Only paths within the configured allowed_write list are writable. "
+            "Overwrites the file if it already exists."
+        ),
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to write.",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Text content to write.",
+                },
+            },
+            "required": ["path", "content"],
+            "additionalProperties": False,
+        },
+        risk_level="medium",
+        allowed_agents=["dev_agent"],
+        _execute=execute,
+    )
+
+
+def make_list_directory_tool(allowed_paths: list[str]) -> Tool:
+    """Return a list_directory Tool restricted to the given allowed_paths."""
+
+    def execute(params: dict) -> dict:
+        path = params["path"]
+        if not _is_allowed(path, allowed_paths):
+            return {"error": f"Path not in allowed_read list: {path!r}"}
+        try:
+            p = Path(path)
+            if not p.is_dir():
+                return {"error": f"Not a directory: {path!r}"}
+            entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
+            return {
+                "path": path,
+                "entries": [
+                    {"name": e.name, "type": "dir" if e.is_dir() else "file"}
+                    for e in entries
+                ],
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    return Tool(
+        name="list_directory",
+        description=(
+            "List the contents of a directory. "
+            "Returns entry names and types (file or dir). "
+            "Only paths within the configured allowed_read list are accessible."
+        ),
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the directory to list.",
                 }
             },
             "required": ["path"],

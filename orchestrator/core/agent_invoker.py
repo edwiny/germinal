@@ -2,12 +2,13 @@
 #          tool calls from the response, executes them through the registry,
 #          and writes every step to the database.
 # Relationships: Uses storage/db.py, tools/registry.py, agents/base_prompt.py.
-#               Called directly by main.py in Phase 0; by router.py in Phase 1+.
+#               Called by main.py's event loop; approval_gate.py injected as callable.
 
 import json
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import Callable
 
 import litellm
 
@@ -37,9 +38,11 @@ def invoke(
     registry: ToolRegistry,
     api_key: str | None = None,
     project_id: str | None = None,
+    event_id: str | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     db_path: str | None = None,
     debug_print_prompts: bool = False,
+    approval_gate: Callable | None = None,
 ) -> dict:
     """
     Run a single agent invocation to completion.
@@ -101,6 +104,9 @@ def invoke(
             parameters=parameters,
             registry=registry,
             db_path=db_path,
+            agent_type=agent_type,
+            project_id=project_id,
+            approval_gate=approval_gate,
         )
         tool_calls_log.append(
             {"id": tc_id, "tool": tool_name, "parameters": parameters, "result": result}
@@ -159,6 +165,9 @@ def _run_tool(
     parameters: dict,
     registry: ToolRegistry,
     db_path: str | None,
+    agent_type: str = "unknown",
+    project_id: str | None = None,
+    approval_gate: Callable | None = None,
 ) -> dict:
     """Resolve, execute, and log a single tool call."""
     created_at = _now()
@@ -179,6 +188,22 @@ def _run_tool(
         tool_call_id, invocation_id, tool_name, parameters,
         tool.risk_level, None, "pending", created_at, db_path,
     )
+
+    # High-risk tools require explicit human approval before execution.
+    # If no approval_gate is provided (e.g. in unit tests), high-risk tools
+    # proceed unguarded — only the production event loop wires a gate in.
+    if tool.risk_level == "high" and approval_gate is not None:
+        approved = approval_gate(
+            tool_name=tool_name,
+            parameters=parameters,
+            agent_type=agent_type,
+            project_id=project_id,
+            tool_call_id=tool_call_id,
+        )
+        if not approved:
+            result = {"error": f"Tool call {tool_name!r} denied by approval gate."}
+            _db_update_tool_call(tool_call_id, result, "denied", db_path)
+            return result
 
     try:
         result = tool.execute(parameters)
