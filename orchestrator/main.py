@@ -38,27 +38,30 @@ def build_registry(config: dict) -> ToolRegistry:
     return registry
 
 
-def _select_model(config: dict) -> str:
+def _select_model(config: dict) -> tuple[str, str | None]:
     """
-    Pick a model from config based on the ORCHESTRATOR_MODEL_TIER env var.
+    Resolve the active model string and API key from config.
 
-    # The env var lets the user switch tiers without editing config.yaml.
-    # Valid values: local | remote | openrouter
-    # Defaults to 'local' so the system works out of the box with Ollama.
+    Returns (model_string, api_key_or_None).
+
+    # ORCHESTRATOR_MODEL overrides the config default by name, letting the
+    # user switch models without editing config.yaml. If not set, the
+    # config.models.default name is used.
+    # The api_key_env field names the environment variable holding the key.
+    # An empty api_key_env means no key is needed (e.g. local Ollama).
     """
-    tier = os.environ.get("ORCHESTRATOR_MODEL_TIER", "local").lower()
-    tier_map = {
-        "local":       "default_local",
-        "remote":      "default_remote",
-        "openrouter":  "default_openrouter",
-    }
-    key = tier_map.get(tier)
-    if key is None:
+    models_cfg = config["models"]
+    model_name = os.environ.get("ORCHESTRATOR_MODEL", models_cfg["default"])
+    index = {m["name"]: m for m in models_cfg["list"]}
+    if model_name not in index:
         raise ValueError(
-            f"Unknown ORCHESTRATOR_MODEL_TIER={tier!r}. "
-            f"Valid values: {list(tier_map)}"
+            f"Unknown model name {model_name!r}. "
+            f"Valid names: {list(index)}"
         )
-    return config["models"][key]
+    entry = index[model_name]
+    api_key_env = entry.get("api_key_env", "")
+    api_key = os.environ.get(api_key_env) if api_key_env else None
+    return entry["model"], api_key
 
 
 def main() -> None:
@@ -68,7 +71,7 @@ def main() -> None:
     init_db(db_path)
 
     registry = build_registry(config)
-    model = _select_model(config)
+    model, api_key = _select_model(config)
 
     print(f"Model : {model}")
     print(f"DB    : {db_path}")
@@ -79,8 +82,10 @@ def main() -> None:
         task_description=_TASK,
         agent_type="task_agent",
         model=model,
+        api_key=api_key,
         registry=registry,
         db_path=db_path,
+        debug_print_prompts=config.get("debug", {}).get("print_prompts", False),
     )
 
     print()

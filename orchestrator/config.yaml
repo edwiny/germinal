@@ -1,10 +1,19 @@
 models:
-  default_local: "ollama/llama3.2"
-  default_remote: "anthropic/claude-sonnet-4-6"
-  # OpenRouter gives access to many models through a single API key.
-  # Model strings use the format: openrouter/<provider>/<model-name>
-  # Full list: https://openrouter.ai/models
-  default_openrouter: "openrouter/meta-llama/llama-3.1-8b-instruct"
+  # The default model used for agent invocations unless overridden by routing rules.
+  # Must match the name field of one of the entries in the list below.
+  default: "kimi-k2"
+  list:
+    - name: "kimi-k2"
+      # OpenRouter model strings use the format: openrouter/<provider>/<model-name>
+      # Full list: https://openrouter.ai/models
+      model: "openrouter/moonshotai/kimi-k2.5"
+      api_key_env: "OPENROUTER_API_KEY"
+    - name: "llama3"
+      model: "ollama/llama3.2"
+      api_key_env: ""
+    - name: "claude-sonnet"
+      model: "anthropic/claude-sonnet-4-6"
+      api_key_env: "ANTHROPIC_API_KEY"
   routing:
     # Use local model for lightweight tasks, remote for complex reasoning.
     local_for: ["summarize", "classify", "reflect"]
@@ -56,6 +65,11 @@ agents:
 approval:
   # Terminal mode: blocks on stdin prompt. Replaced in later phases.
   mode: "terminal"
+
+debug:
+  # Print every message array sent to the model. Useful during development;
+  # disable in production to avoid leaking context to stdout.
+  print_prompts: true
 
 context:
   recent_buffer_tokens: 4000

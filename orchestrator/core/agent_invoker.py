@@ -35,9 +35,11 @@ def invoke(
     agent_type: str,
     model: str,
     registry: ToolRegistry,
+    api_key: str | None = None,
     project_id: str | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     db_path: str | None = None,
+    debug_print_prompts: bool = False,
 ) -> dict:
     """
     Run a single agent invocation to completion.
@@ -75,7 +77,9 @@ def invoke(
     status = "failed"
 
     for _ in range(max_iterations):
-        raw = litellm.completion(model=model, messages=messages)
+        if debug_print_prompts:
+            _print_messages(messages)
+        raw = litellm.completion(model=model, messages=messages, api_key=api_key)
         assistant_text: str = raw.choices[0].message.content or ""
         messages.append({"role": "assistant", "content": assistant_text})
 
@@ -184,6 +188,22 @@ def _run_tool(
         _db_update_tool_call(tool_call_id, result, "failed", db_path)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Debug helpers
+# ---------------------------------------------------------------------------
+
+
+def _print_messages(messages: list[dict]) -> None:
+    print("\n" + "─" * 60)
+    print(f"PROMPT  ({len(messages)} message(s))")
+    print("─" * 60)
+    for msg in messages:
+        role = msg["role"].upper()
+        content = msg["content"] or ""
+        print(f"\n[{role}]\n{content}")
+    print("─" * 60 + "\n")
 
 
 # ---------------------------------------------------------------------------
