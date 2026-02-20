@@ -12,6 +12,9 @@ build/
 orchestrator/storage/*.db
 orchestrator/logs/
 
+# Secrets
+orchestrator/.env
+
 # Editor
 .DS_Store
 *.swp

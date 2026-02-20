@@ -38,6 +38,29 @@ def build_registry(config: dict) -> ToolRegistry:
     return registry
 
 
+def _select_model(config: dict) -> str:
+    """
+    Pick a model from config based on the ORCHESTRATOR_MODEL_TIER env var.
+
+    # The env var lets the user switch tiers without editing config.yaml.
+    # Valid values: local | remote | openrouter
+    # Defaults to 'local' so the system works out of the box with Ollama.
+    """
+    tier = os.environ.get("ORCHESTRATOR_MODEL_TIER", "local").lower()
+    tier_map = {
+        "local":       "default_local",
+        "remote":      "default_remote",
+        "openrouter":  "default_openrouter",
+    }
+    key = tier_map.get(tier)
+    if key is None:
+        raise ValueError(
+            f"Unknown ORCHESTRATOR_MODEL_TIER={tier!r}. "
+            f"Valid values: {list(tier_map)}"
+        )
+    return config["models"][key]
+
+
 def main() -> None:
     config = load_config()
 
@@ -45,7 +68,7 @@ def main() -> None:
     init_db(db_path)
 
     registry = build_registry(config)
-    model = config["models"]["default_local"]
+    model = _select_model(config)
 
     print(f"Model : {model}")
     print(f"DB    : {db_path}")

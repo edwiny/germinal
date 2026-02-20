@@ -1,6 +1,10 @@
 models:
   default_local: "ollama/llama3.2"
   default_remote: "anthropic/claude-sonnet-4-6"
+  # OpenRouter gives access to many models through a single API key.
+  # Model strings use the format: openrouter/<provider>/<model-name>
+  # Full list: https://openrouter.ai/models
+  default_openrouter: "openrouter/meta-llama/llama-3.1-8b-instruct"
   routing:
     # Use local model for lightweight tasks, remote for complex reasoning.
     local_for: ["summarize", "classify", "reflect"]
