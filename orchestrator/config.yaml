@@ -1,7 +1,4 @@
 models:
-  # The default model used for agent invocations unless overridden by routing rules.
-  # Must match the name field of one of the entries in the list below.
-  default: "kimi-k2"
   list:
     - name: "kimi-k2"
       # OpenRouter model strings use the format: openrouter/<provider>/<model-name>
@@ -14,10 +11,26 @@ models:
     - name: "claude-sonnet"
       model: "anthropic/claude-sonnet-4-6"
       api_key_env: "ANTHROPIC_API_KEY"
-  routing:
-    # Use local model for lightweight tasks, remote for complex reasoning.
-    local_for: ["summarize", "classify", "reflect"]
-    remote_for: ["dev", "research", "plan"]
+  # Each category maps a named model (by name in the list above) to the task
+  # types it should handle. _select_model() in main.py resolves any model_key
+  # ("default", "local", "remote") through this table.
+  categories:
+    - category: "default"
+      # ORCHESTRATOR_MODEL env var overrides this at runtime without touching config.
+      model: "kimi-k2"
+      used_for: []
+    - category: "local"
+      model: "llama3"
+      used_for:
+        - "summarize"
+        - "classify"
+        - "reflect"
+    - category: "remote"
+      model: "kimi-k2"
+      used_for:
+        - "dev"
+        - "research"
+        - "plan"
 
 paths:
   # Paths are evaluated relative to the orchestrator/ working directory.

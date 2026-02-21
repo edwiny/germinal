@@ -21,8 +21,8 @@ def tmp_db(tmp_path):
 def config(tmp_db):
     return {
         "models": {
-            "default": "kimi-k2",
             "list": [{"name": "kimi-k2", "model": "openrouter/moonshotai/kimi-k2.5", "api_key_env": "OPENROUTER_API_KEY"}],
+            "categories": [{"category": "default", "model": "kimi-k2", "used_for": []}],
         },
         "paths": {"db": tmp_db},
     }

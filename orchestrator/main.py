@@ -110,15 +110,23 @@ def _select_model(config: dict, model_key: str) -> tuple[str, str | None]:
     """
     Resolve model_key → (litellm model string, api_key | None).
 
-    "default" is resolved via ORCHESTRATOR_MODEL env var then config default.
-    Any other key is looked up directly in the model list by name.
+    model_key is first looked up in models.categories by category name.
+    If not found as a category, it is treated as a direct model name in
+    models.list. The ORCHESTRATOR_MODEL env var overrides the resolved name
+    when model_key is "default", allowing the active model to be changed at
+    runtime without editing config.yaml.
     """
     models_cfg = config["models"]
+    categories = {c["category"]: c for c in models_cfg.get("categories", [])}
 
-    if model_key == "default":
-        resolved_name = os.environ.get("ORCHESTRATOR_MODEL", models_cfg["default"])
+    if model_key in categories:
+        resolved_name = categories[model_key]["model"]
     else:
         resolved_name = model_key
+
+    # Allow runtime override of the default category's model via env var.
+    if model_key == "default":
+        resolved_name = os.environ.get("ORCHESTRATOR_MODEL", resolved_name)
 
     index = {m["name"]: m for m in models_cfg["list"]}
     if resolved_name not in index:

@@ -1,5 +1,5 @@
 # Purpose: Rules-based event router.
-# Relationships: Called by main.py's event loop; uses config.yaml routing section.
+# Relationships: Called by main.py's event loop; uses models.categories in config.yaml.
 #               Reads storage/db.py for preflight task-count queries.
 
 # Given an event dict, the router returns a routing decision dict containing
@@ -32,7 +32,7 @@ _ROUTING_RULES: list[dict] = [
         "model_key": "default",
         # The tick task is intentionally lightweight: review open tasks and
         # notify the user if anything needs attention. Local model is preferred
-        # for this classification-style workload (see config.yaml routing).
+        # for this classification-style workload (see models.categories in config.yaml).
         "task_template": (
             "A scheduled timer tick has fired. "
             "Use read_task_list to check the open task backlog. "

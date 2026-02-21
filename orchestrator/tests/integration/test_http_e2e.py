@@ -52,8 +52,8 @@ def _parse_sse(raw: str) -> list[dict]:
 def _test_config(db_path: str) -> dict:
     return {
         "models": {
-            "default": "test-model",
             "list": [{"name": "test-model", "model": "ollama/test", "api_key_env": ""}],
+            "categories": [{"category": "default", "model": "test-model", "used_for": []}],
         },
         "paths": {
             "allowed_read": ["/tmp"],

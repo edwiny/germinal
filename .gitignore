@@ -11,6 +11,9 @@ build/
 # Database and logs
 orchestrator/storage/*.db
 orchestrator/logs/
+*.db-shm
+*.db-wal
+
 
 # Secrets
 orchestrator/.env

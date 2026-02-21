@@ -97,9 +97,10 @@ async def invoke(
     status = "failed"
 
     for iteration in range(max_iterations):
-        _log_messages(messages, iteration)
+        _log_outgoing(messages[-1], iteration)
         raw = await litellm.acompletion(model=model, messages=messages, api_key=api_key)
         assistant_text: str = raw.choices[0].message.content or ""
+        _log_incoming(assistant_text, iteration)
         messages.append({"role": "assistant", "content": assistant_text})
 
         call_request = _parse_tool_call(assistant_text)
@@ -244,16 +245,33 @@ def _run_tool(
 # Debug helpers
 # ---------------------------------------------------------------------------
 
+_MAX_LOG_CHARS = 4_000
 
-def _log_messages(messages: list[dict], iteration: int) -> None:
-    # Only emitted at DEBUG level — gated by logging config, no flag needed.
+
+def _truncate_log(text: str) -> str:
+    """Trim text to _MAX_LOG_CHARS and append a count of the dropped chars."""
+    text = text.strip()
+    if len(text) > _MAX_LOG_CHARS:
+        dropped = len(text) - _MAX_LOG_CHARS
+        return text[:_MAX_LOG_CHARS] + f"\n… [{dropped} chars truncated]"
+    return text
+
+
+def _log_outgoing(message: dict, iteration: int) -> None:
+    """Log the newest message being sent to the LLM (→ direction)."""
     if not logger.isEnabledFor(logging.DEBUG):
         return
-    logger.debug("Iteration %d — sending %d message(s) to model", iteration + 1, len(messages))
-    for msg in messages:
-        role = msg["role"]
-        content = (msg["content"] or "").strip()
-        logger.debug("[%s] %s", role, content)
+    role = message.get("role", "?")
+    content = _truncate_log(message.get("content") or "")
+    logger.debug("→ LLM  iter=%d  role=%s\n%s", iteration + 1, role, content)
+
+
+def _log_incoming(text: str, iteration: int) -> None:
+    """Log the raw response received from the LLM (← direction)."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    content = _truncate_log(text)
+    logger.debug("← LLM  iter=%d  role=assistant\n%s", iteration + 1, content)
 
 
 # ---------------------------------------------------------------------------
