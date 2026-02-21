@@ -3,7 +3,7 @@
 # without mocking the tool layer (only LiteLLM is mocked).
 
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -35,7 +35,7 @@ def _mock_response(content: str) -> MagicMock:
     return r
 
 
-def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, caplog):
+async def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, caplog):
     """
     Full pipeline: agent reads a real file, notifies user, invocation in DB.
     LiteLLM is mocked; all tool execution is real.
@@ -58,10 +58,10 @@ def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, caplog):
     done_response = _mock_response("Task complete.")
 
     with caplog.at_level(logging.INFO, logger="notify"), patch(
-        "core.agent_invoker.litellm.completion",
-        side_effect=[read_response, notify_response, done_response],
+        "core.agent_invoker.litellm.acompletion",
+        new=AsyncMock(side_effect=[read_response, notify_response, done_response]),
     ):
-        result = invoke(
+        result = await invoke(
             task_description="Read the readme and notify the user.",
             agent_type="task_agent",
             model="ollama/llama3.2",

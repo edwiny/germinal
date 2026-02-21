@@ -125,7 +125,7 @@ def append_to_history(project_id: str, role: str, content: str, db_path: str) ->
         )
 
 
-def maybe_summarise(
+async def maybe_summarise(
     project_id: str,
     db_path: str,
     model: str,
@@ -200,7 +200,7 @@ def maybe_summarise(
         "open questions. Omit pleasantries and repetition. Output only the summary."
     )
 
-    response = litellm.completion(
+    response = await litellm.acompletion(
         model=model,
         messages=[{"role": "user", "content": summarise_prompt}],
         api_key=api_key,

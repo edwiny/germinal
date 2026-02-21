@@ -1,19 +1,29 @@
-# Purpose: Phase 1 entry point. Runs the event loop: initialises all
-#          subsystems, starts the timer adapter, and continuously dequeues
-#          events, routes them to agents, and drives invocations.
+# Purpose: Entry point. Initialises all subsystems, starts the timer and
+#          (optionally) the network adapter as asyncio tasks, then runs the
+#          async event loop — dequeuing events, routing them, and driving
+#          agent invocations.
+#
 # Relationships: Wires together storage/db.py, tools/*, core/*, adapters/*,
 #               and agents/*. This is the only place all subsystems are
 #               assembled — individual modules know nothing about each other.
+#
+# Async architecture: the main event loop is a single asyncio coroutine.
+# SQLite calls remain synchronous (they are sub-ms local operations and do
+# not starve the event loop). LLM calls use litellm.acompletion() which
+# yields during network I/O. asyncio.sleep() in the idle branch yields to
+# allow the network adapter to service HTTP connections between events.
+# No threads are used. The timer runs as an asyncio.create_task() coroutine.
 
+import asyncio
 import logging
 import os
 import signal
 import sys
-import time
 
 import yaml
 
-from adapters.timer import TimerAdapter
+import adapters.timer as timer_adapter
+from adapters.network import NetworkAdapter
 from agents import task_agent as task_agent_mod
 from core.agent_invoker import invoke
 from core.approval_gate import request_approval
@@ -167,46 +177,30 @@ def _agent_registry(agent_type: str, full_registry: ToolRegistry, config: dict) 
     return full_registry
 
 
-def main() -> None:
-    config = load_config()
-    setup_logging(config.get("logging", {}).get("level", "INFO"))
+async def _event_loop(
+    db_path: str,
+    config: dict,
+    full_registry: ToolRegistry,
+    approval_gate,
+    pending_http: dict,
+    stop_event: asyncio.Event,
+) -> None:
+    """
+    Core event loop: dequeue, route, and invoke, until stop_event is set.
 
+    pending_http maps event_id → asyncio.Future for events that originated
+    from HTTP requests. After invoke() completes, we resolve the future so
+    the HTTP handler can return the response to the client.
+    """
     logger_main = logging.getLogger("main")
     logger_event = logging.getLogger("event")
 
-    db_path = config["paths"]["db"]
-
-    init_db(db_path)
-
-    stale = reset_stale_events(db_path)
-    if stale:
-        logger_main.info("Reset %d stale event(s) to 'pending'.", stale)
-
-    full_registry = build_full_registry(config, db_path)
-    approval_gate = _make_approval_gate(db_path)
-
-    timer = TimerAdapter(db_path=db_path, interval_seconds=_TIMER_INTERVAL_SECONDS)
-    timer.start()
-    logger_main.info("Timer adapter started (%ds interval).", _TIMER_INTERVAL_SECONDS)
-
-    # Graceful shutdown: flip _running on SIGINT / SIGTERM so the loop exits
-    # cleanly after the current event finishes. The timer thread is a daemon
-    # and exits automatically, but we stop it explicitly for clean logging.
-    _running = [True]
-
-    def _handle_signal(sig, frame):
-        logger_main.info("Signal %s received — stopping after current event.", sig)
-        _running[0] = False
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-
-    logger_main.info("Event loop running. Press Ctrl-C to stop.")
-
-    while _running[0]:
+    while not stop_event.is_set():
         event = dequeue_next_event(db_path)
         if event is None:
-            time.sleep(_IDLE_SLEEP_SECONDS)
+            # Yield to the asyncio event loop so the network adapter can
+            # accept and service connections while the queue is empty.
+            await asyncio.sleep(_IDLE_SLEEP_SECONDS)
             continue
 
         event_id = event["id"]
@@ -219,12 +213,16 @@ def main() -> None:
         except UnroutableEvent as exc:
             logger_event.warning("Unroutable — %s", exc)
             fail_event(db_path, event_id)
+            # Resolve any waiting HTTP future with an error result so the
+            # client gets a response instead of hanging until timeout.
+            _resolve_pending(pending_http, event_id, {"status": "failed", "response": str(exc), "tool_calls": [], "invocation_id": ""})
             continue
 
         preflight = routing.get("preflight")
         if preflight is not None and not preflight():
             logger_event.info("preflight skipped — no action needed")
             complete_event(db_path, event_id)
+            _resolve_pending(pending_http, event_id, {"status": "done", "response": "", "tool_calls": [], "invocation_id": ""})
             continue
 
         # Resolve project_id: event payload takes priority, then config default.
@@ -238,13 +236,17 @@ def main() -> None:
                 db_path,
             )
 
+        # HTTP events carry the intended agent_type in the payload so the
+        # router can honour it. The router rule for source="http" should
+        # use {payload[agent_type]} in its task_template and set agent_type
+        # from the payload; until that rule exists, fall back to routing result.
         agent_type = routing["agent_type"]
         model, api_key = _select_model(config, routing["model_key"])
         agent_reg = _agent_registry(agent_type, full_registry, config)
         max_iter = config.get("agents", {}).get(agent_type, {}).get("max_iterations", 10)
 
         try:
-            result = invoke(
+            result = await invoke(
                 task_description=routing["task_description"],
                 agent_type=agent_type,
                 model=model,
@@ -262,14 +264,103 @@ def main() -> None:
                 result["invocation_id"], result["status"], len(result["tool_calls"]),
             )
             complete_event(db_path, event_id)
+            _resolve_pending(pending_http, event_id, result)
         except Exception as exc:
             logger_event.error("Invocation raised unexpectedly: %s", exc)
             fail_event(db_path, event_id)
+            _resolve_pending(pending_http, event_id, {"status": "failed", "response": str(exc), "tool_calls": [], "invocation_id": ""})
 
-    timer.stop()
-    timer.join(timeout=5.0)
-    logger_main.info("Done.")
+
+def _resolve_pending(pending_http: dict, event_id: str, result: dict) -> None:
+    """
+    If event_id has a waiting HTTP future, resolve it.
+
+    Called after every event completes (success or failure) so HTTP clients
+    always get a response rather than waiting until timeout.
+    """
+    future = pending_http.pop(event_id, None)
+    if future is not None and not future.done():
+        future.set_result(result)
+
+
+async def main() -> None:
+    config = load_config()
+    setup_logging(config.get("logging", {}).get("level", "INFO"))
+
+    logger_main = logging.getLogger("main")
+
+    db_path = config["paths"]["db"]
+
+    init_db(db_path)
+
+    stale = reset_stale_events(db_path)
+    if stale:
+        logger_main.info("Reset %d stale event(s) to 'pending'.", stale)
+
+    full_registry = build_full_registry(config, db_path)
+    approval_gate = _make_approval_gate(db_path)
+
+    # Shared dict: event_id → asyncio.Future. The network adapter writes futures
+    # here; the event loop resolves them after invoke() completes.
+    pending_http: dict[str, asyncio.Future] = {}
+
+    stop_event = asyncio.Event()
+
+    # Graceful shutdown: signal handlers set stop_event so the event loop
+    # and timer task exit cleanly after the current operation finishes.
+    # asyncio signal handlers run in the event loop thread — safe to call
+    # asyncio.Event.set() directly.
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(
+            sig,
+            lambda s=sig: (
+                logger_main.info("Signal %s received — stopping.", s),
+                stop_event.set(),
+            ),
+        )
+
+    # Start timer as an asyncio task (no threads).
+    timer_stop = asyncio.Event()
+    timer_task = asyncio.create_task(
+        timer_adapter.run(
+            db_path=db_path,
+            interval_seconds=_TIMER_INTERVAL_SECONDS,
+            stop_event=timer_stop,
+        ),
+        name="timer-adapter",
+    )
+    logger_main.info("Timer adapter started (%ds interval).", _TIMER_INTERVAL_SECONDS)
+
+    # Start network adapter if enabled.
+    network_cfg = config.get("network", {})
+    net_adapter: NetworkAdapter | None = None
+    if network_cfg.get("enabled", False):
+        net_adapter = NetworkAdapter(
+            config=config,
+            db_path=db_path,
+            pending=pending_http,
+        )
+        await net_adapter.start()
+
+    logger_main.info("Event loop running. Press Ctrl-C to stop.")
+
+    try:
+        await _event_loop(
+            db_path=db_path,
+            config=config,
+            full_registry=full_registry,
+            approval_gate=approval_gate,
+            pending_http=pending_http,
+            stop_event=stop_event,
+        )
+    finally:
+        timer_stop.set()
+        await asyncio.wait_for(timer_task, timeout=5.0)
+        if net_adapter:
+            await net_adapter.stop()
+        logger_main.info("Done.")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

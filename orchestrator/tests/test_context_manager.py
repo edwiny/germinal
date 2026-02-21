@@ -3,7 +3,7 @@
 #         history token budget truncation, append_to_history, maybe_summarise.
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -169,17 +169,17 @@ def test_append_to_history_preserves_role(tmp_db):
 # ---------------------------------------------------------------------------
 
 
-def test_maybe_summarise_skips_when_within_budget(tmp_db):
+async def test_maybe_summarise_skips_when_within_budget(tmp_db):
     ensure_project("proj-1", "Project One", tmp_db)
     # "short" is well under 100 tokens so no summarisation should happen.
     append_to_history("proj-1", "user", "short", tmp_db)
 
-    with patch("core.context_manager.litellm.completion") as mock_completion:
-        maybe_summarise("proj-1", tmp_db, "ollama/llama3.2", None, _CONFIG)
+    with patch("core.context_manager.litellm.acompletion") as mock_completion:
+        await maybe_summarise("proj-1", tmp_db, "ollama/llama3.2", None, _CONFIG)
         mock_completion.assert_not_called()
 
 
-def test_maybe_summarise_triggers_updates_summary_and_deletes_old_rows(tmp_db):
+async def test_maybe_summarise_triggers_updates_summary_and_deletes_old_rows(tmp_db):
     """Over-budget history must be summarised, projects.summary updated, old rows deleted."""
     ensure_project("proj-1", "Project One", tmp_db)
 
@@ -195,8 +195,11 @@ def test_maybe_summarise_triggers_updates_summary_and_deletes_old_rows(tmp_db):
     mock_resp = MagicMock()
     mock_resp.choices[0].message.content = "Compressed summary text."
 
-    with patch("core.context_manager.litellm.completion", return_value=mock_resp):
-        maybe_summarise("proj-1", tmp_db, "ollama/llama3.2", None, _CONFIG)
+    with patch(
+        "core.context_manager.litellm.acompletion",
+        new=AsyncMock(return_value=mock_resp),
+    ):
+        await maybe_summarise("proj-1", tmp_db, "ollama/llama3.2", None, _CONFIG)
 
     with get_conn(tmp_db) as conn:
         project = conn.execute(

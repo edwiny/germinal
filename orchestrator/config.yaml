@@ -71,7 +71,7 @@ approval:
 
 logging:
   # DEBUG emits full prompt dumps; INFO is the recommended production level.
-  level: INFO
+  level: DEBUG
 
 context:
   # when the combined context history exceeds these many tokens (currently 1 token == 4 characters) then invoke
@@ -85,3 +85,23 @@ projects:
   # Set to null to disable automatic project assignment.
   default_project_id: "default"
   default_project_name: "Default Project"
+
+network:
+  # Set enabled: false to run without any network listener (timer-only mode).
+  enabled: true
+  tcp:
+    host: "127.0.0.1"
+    port: 8080
+  # UNIX domain socket path. Clients (e.g. curl --unix-socket) connect here.
+  # Set to null to disable the UNIX socket listener.
+  unix_socket: "/tmp/germinal.sock"
+  # Seconds to wait for an agent response before returning a 504 to the HTTP client.
+  request_timeout_s: 300
+  # Set require_auth: true and provide an api_key to require Bearer token authentication.
+  # Clients must send: Authorization: Bearer <api_key>
+  require_auth: false
+  api_key: ""
+  # Name shown to clients in GET /v1/models and echoed back in responses.
+  # The client must send this string in the model field (required by the OpenAI
+  # protocol) but the orchestrator ignores it for routing and LLM selection.
+  model_name: "orchestrator"

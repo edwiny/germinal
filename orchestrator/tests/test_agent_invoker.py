@@ -2,7 +2,7 @@
 # Covers: invocation written to DB, tool call executed and logged,
 #         unknown tool handled gracefully, iteration cap fires cleanly.
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -61,13 +61,13 @@ def _mock_response(content: str) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def test_invocation_row_written_on_completion(tmp_db, registry):
+async def test_invocation_row_written_on_completion(tmp_db, registry):
     """A completed invocation must appear in the DB with status 'done'."""
     with patch(
-        "core.agent_invoker.litellm.completion",
-        return_value=_mock_response("All done, no tools needed."),
+        "core.agent_invoker.litellm.acompletion",
+        new=AsyncMock(return_value=_mock_response("All done, no tools needed.")),
     ):
-        result = invoke(
+        result = await invoke(
             task_description="Say hello",
             agent_type="task_agent",
             model="ollama/llama3.2",
@@ -87,7 +87,7 @@ def test_invocation_row_written_on_completion(tmp_db, registry):
     assert rows[0]["agent_type"] == "task_agent"
 
 
-def test_tool_call_executed_and_logged(tmp_db, registry):
+async def test_tool_call_executed_and_logged(tmp_db, registry):
     """Invoker must execute a tool call and record it in tool_calls table."""
     tool_response = _mock_response(
         "I will echo the message.\n"
@@ -96,10 +96,10 @@ def test_tool_call_executed_and_logged(tmp_db, registry):
     done_response = _mock_response("Done. The echo returned 'hello'.")
 
     with patch(
-        "core.agent_invoker.litellm.completion",
-        side_effect=[tool_response, done_response],
+        "core.agent_invoker.litellm.acompletion",
+        new=AsyncMock(side_effect=[tool_response, done_response]),
     ):
-        result = invoke(
+        result = await invoke(
             task_description="Echo hello",
             agent_type="task_agent",
             model="ollama/llama3.2",
@@ -123,7 +123,7 @@ def test_tool_call_executed_and_logged(tmp_db, registry):
     assert tc_rows[0]["tool_name"] == "echo"
 
 
-def test_unknown_tool_returns_error_and_continues(tmp_db, registry):
+async def test_unknown_tool_returns_error_and_continues(tmp_db, registry):
     """Calling an unregistered tool must return an error dict, not raise."""
     bad_tool_response = _mock_response(
         '<tool_call>\n{"tool": "nonexistent", "parameters": {}}\n</tool_call>'
@@ -131,10 +131,10 @@ def test_unknown_tool_returns_error_and_continues(tmp_db, registry):
     done_response = _mock_response("Acknowledged the error. Task complete.")
 
     with patch(
-        "core.agent_invoker.litellm.completion",
-        side_effect=[bad_tool_response, done_response],
+        "core.agent_invoker.litellm.acompletion",
+        new=AsyncMock(side_effect=[bad_tool_response, done_response]),
     ):
-        result = invoke(
+        result = await invoke(
             task_description="Call a nonexistent tool",
             agent_type="task_agent",
             model="ollama/llama3.2",
@@ -146,7 +146,7 @@ def test_unknown_tool_returns_error_and_continues(tmp_db, registry):
     assert "error" in result["tool_calls"][0]["result"]
 
 
-def test_iteration_cap_sets_failed_status(tmp_db, registry):
+async def test_iteration_cap_sets_failed_status(tmp_db, registry):
     """An agent that keeps emitting tool calls must fail after max_iterations."""
     # Every response includes a tool call so the loop never terminates.
     looping_response = _mock_response(
@@ -154,10 +154,10 @@ def test_iteration_cap_sets_failed_status(tmp_db, registry):
     )
 
     with patch(
-        "core.agent_invoker.litellm.completion",
-        return_value=looping_response,
+        "core.agent_invoker.litellm.acompletion",
+        new=AsyncMock(return_value=looping_response),
     ):
-        result = invoke(
+        result = await invoke(
             task_description="Loop forever",
             agent_type="task_agent",
             model="ollama/llama3.2",

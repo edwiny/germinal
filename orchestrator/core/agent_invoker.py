@@ -3,7 +3,14 @@
 #          and writes every step to the database.
 # Relationships: Uses storage/db.py, tools/registry.py, agents/base_prompt.py.
 #               Called by main.py's event loop; approval_gate.py injected as callable.
+#
+# invoke() is an async coroutine. It must be awaited. The only blocking calls
+# inside it are SQLite helpers (sub-ms, acceptable) and tool.execute() calls
+# (also sync — tool authors must not perform long I/O in execute()). The LLM
+# call uses litellm.acompletion() which is truly async and yields to the event
+# loop while waiting for network I/O.
 
+import asyncio
 import json
 import logging
 import re
@@ -39,7 +46,7 @@ _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 # ---------------------------------------------------------------------------
 
 
-def invoke(
+async def invoke(
     task_description: str,
     agent_type: str,
     model: str,
@@ -53,7 +60,7 @@ def invoke(
     config: dict | None = None,
 ) -> dict:
     """
-    Run a single agent invocation to completion.
+    Run a single agent invocation to completion. Must be awaited.
 
     Assembles the prompt, drives the tool-call loop, logs everything to the
     DB, and returns a summary dict:
@@ -91,7 +98,7 @@ def invoke(
 
     for iteration in range(max_iterations):
         _log_messages(messages, iteration)
-        raw = litellm.completion(model=model, messages=messages, api_key=api_key)
+        raw = await litellm.acompletion(model=model, messages=messages, api_key=api_key)
         assistant_text: str = raw.choices[0].message.content or ""
         messages.append({"role": "assistant", "content": assistant_text})
 
@@ -141,7 +148,7 @@ def invoke(
     if project_id and db_path and config:
         append_to_history(project_id, "user", task_description, db_path)
         append_to_history(project_id, "agent", final_response, db_path)
-        maybe_summarise(project_id, db_path, model, api_key, config)
+        await maybe_summarise(project_id, db_path, model, api_key, config)
 
     _db_finish_invocation(
         invocation_id=invocation_id,

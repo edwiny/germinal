@@ -47,6 +47,15 @@ _ROUTING_RULES: list[dict] = [
         "model_key": "default",
         "task_template": "{payload[message]}",
     },
+    {
+        # Events injected by the HTTP network adapter.
+        # Agent type and model are chosen by the orchestrator, not the client.
+        "source": "http",
+        "type": "message",
+        "agent_type": "task_agent",
+        "model_key": "default",
+        "task_template": "{payload[message]}",
+    },
 ]
 
 
@@ -82,7 +91,6 @@ def route_event(event: dict, config: dict) -> dict:
                 payload = {}
 
         task_description = _render_template(rule["task_template"], payload)
-
         preflight = None
         if event.get("source") == "timer" and event.get("type") == "tick":
             db_path = config["paths"]["db"]
