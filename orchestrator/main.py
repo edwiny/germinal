@@ -22,7 +22,6 @@ import sys
 
 import yaml
 
-import adapters.timer as timer_adapter
 from adapters.network import NetworkAdapter
 from agents import task_agent as task_agent_mod
 from core.agent_invoker import invoke
@@ -54,10 +53,6 @@ from tools.shell import make_run_tests_tool, make_shell_run_tool
 # Poll interval when the event queue is empty. 500ms balances responsiveness
 # against unnecessary CPU spin. Do not set below ~100ms on SQLite.
 _IDLE_SLEEP_SECONDS = 0.5
-
-# Default timer tick interval in seconds. Keep short during bootstrap so
-# there is something to observe quickly; tune upward in production.
-_TIMER_INTERVAL_SECONDS = 60
 
 
 def setup_logging(level: str) -> None:
@@ -214,20 +209,13 @@ async def _event_loop(
         )
 
         try:
-            routing = route_event(event, config)
+            routing = route_event(event)
         except UnroutableEvent as exc:
             logger_event.warning("Unroutable — %s", exc)
             fail_event(db_path, event_id)
             # Resolve any waiting HTTP future with an error result so the
             # client gets a response instead of hanging until timeout.
             _resolve_pending(pending_http, event_id, {"status": "failed", "response": str(exc), "tool_calls": [], "invocation_id": ""})
-            continue
-
-        preflight = routing.get("preflight")
-        if preflight is not None and not preflight():
-            logger_event.info("preflight skipped — no action needed")
-            complete_event(db_path, event_id)
-            _resolve_pending(pending_http, event_id, {"status": "done", "response": "", "tool_calls": [], "invocation_id": ""})
             continue
 
         # Resolve project_id: event payload takes priority, then config default.
@@ -325,18 +313,6 @@ async def main() -> None:
             ),
         )
 
-    # Start timer as an asyncio task (no threads).
-    timer_stop = asyncio.Event()
-    timer_task = asyncio.create_task(
-        timer_adapter.run(
-            db_path=db_path,
-            interval_seconds=_TIMER_INTERVAL_SECONDS,
-            stop_event=timer_stop,
-        ),
-        name="timer-adapter",
-    )
-    logger_main.info("Timer adapter started (%ds interval).", _TIMER_INTERVAL_SECONDS)
-
     # Start network adapter if enabled.
     network_cfg = config.get("network", {})
     net_adapter: NetworkAdapter | None = None
@@ -360,8 +336,6 @@ async def main() -> None:
             stop_event=stop_event,
         )
     finally:
-        timer_stop.set()
-        await asyncio.wait_for(timer_task, timeout=5.0)
         if net_adapter:
             await net_adapter.stop()
         logger_main.info("Done.")

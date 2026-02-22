@@ -86,8 +86,9 @@ rather than reaching the queue or router with invalid data.
 
 ### `core/router.py`
 Rules-based dispatcher. Given an event, returns agent type, model key, and
-task description. Template expansion supports `{payload[key]}` references only
-(no eval, no Jinja). Unknown events raise `UnroutableEvent`.
+task description. Rules match on `source` and `type`; the task description is
+taken directly from `payload["message"]` — rules do not modify prompt content.
+Unknown events raise `UnroutableEvent`.
 
 ### `agents/base_prompt.py`
 Constructs the system prompt: base agent instructions + tool catalogue as JSON.
