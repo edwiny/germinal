@@ -40,9 +40,14 @@ from tools.filesystem import (
     make_read_file_tool,
     make_write_file_tool,
 )
+from tools.code_quality import make_check_syntax_tool, make_lint_tool
 from tools.git import (
+    make_git_add_tool,
     make_git_branch_tool,
     make_git_commit_tool,
+    make_git_diff_tool,
+    make_git_list_branches_tool,
+    make_git_log_tool,
     make_git_rollback_tool,
     make_git_status_tool,
 )
@@ -93,8 +98,14 @@ def build_full_registry(config: dict, db_path: str) -> ToolRegistry:
     registry.register(make_run_tests_tool())
     registry.register(make_git_status_tool())
     registry.register(make_git_commit_tool())
+    registry.register(make_git_add_tool())
     registry.register(make_git_branch_tool())
     registry.register(make_git_rollback_tool())
+    registry.register(make_git_diff_tool())
+    registry.register(make_git_list_branches_tool())
+    registry.register(make_git_log_tool())
+    registry.register(make_lint_tool())
+    registry.register(make_check_syntax_tool())
     return registry
 
 

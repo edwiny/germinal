@@ -18,12 +18,17 @@ from tools.filesystem import (
     ListDirectoryParams,
     ListDirectoryResult,
 )
+from tools.code_quality import CheckSyntaxParams, LintParams
 from tools.git import (
-    GitStatusParams,
+    GitAddParams,
+    GitBranchParams,
     GitCommitParams,
     GitCommitResult,
-    GitBranchParams,
+    GitDiffParams,
+    GitListBranchesParams,
+    GitLogParams,
     GitRollbackParams,
+    GitStatusParams,
 )
 from tools.notify import NotifyUserParams, NotifyUserResult
 from tools.registry import Tool, ToolRegistry, model_to_json_schema
@@ -210,6 +215,94 @@ def test_git_status_params_rejects_extra():
     """GitStatusParams (empty model with extra='forbid') rejects any extra field."""
     with pytest.raises(ValidationError):
         GitStatusParams(unexpected="field")
+
+
+# ---------------------------------------------------------------------------
+# New git tools — contract tests
+# ---------------------------------------------------------------------------
+
+def test_git_diff_params_rejects_extra():
+    """GitDiffParams (empty model) rejects any extra field."""
+    with pytest.raises(ValidationError):
+        GitDiffParams(unexpected="field")
+
+
+def test_git_add_params_requires_paths():
+    """GitAddParams requires at least one path."""
+    with pytest.raises(ValidationError):
+        GitAddParams(paths=[])
+
+
+def test_git_add_params_accepts_paths():
+    """GitAddParams accepts a non-empty list of paths."""
+    p = GitAddParams(paths=["src/foo.py", "src/bar.py"])
+    assert p.paths == ["src/foo.py", "src/bar.py"]
+
+
+def test_git_add_params_rejects_extra():
+    """GitAddParams rejects unknown fields."""
+    with pytest.raises(ValidationError):
+        GitAddParams(paths=["f.py"], extra_field="bad")
+
+
+def test_git_list_branches_params_rejects_extra():
+    """GitListBranchesParams (empty model) rejects any extra field."""
+    with pytest.raises(ValidationError):
+        GitListBranchesParams(unexpected="field")
+
+
+def test_git_log_params_default_n():
+    """GitLogParams defaults n to 10."""
+    p = GitLogParams()
+    assert p.n == 10
+
+
+def test_git_log_params_n_bounds():
+    """GitLogParams rejects n < 1 and n > 100."""
+    with pytest.raises(ValidationError):
+        GitLogParams(n=0)
+    with pytest.raises(ValidationError):
+        GitLogParams(n=101)
+
+
+def test_git_log_params_rejects_extra():
+    """GitLogParams rejects unknown fields."""
+    with pytest.raises(ValidationError):
+        GitLogParams(n=5, extra="bad")
+
+
+# ---------------------------------------------------------------------------
+# code_quality tools — contract tests
+# ---------------------------------------------------------------------------
+
+def test_lint_params_requires_path():
+    """LintParams requires a path."""
+    with pytest.raises(ValidationError):
+        LintParams()
+
+
+def test_lint_params_fix_defaults_false():
+    """LintParams fix defaults to False."""
+    p = LintParams(path="src/")
+    assert p.fix is False
+
+
+def test_lint_params_rejects_extra():
+    """LintParams rejects unknown fields."""
+    with pytest.raises(ValidationError):
+        LintParams(path="src/", unknown="bad")
+
+
+def test_check_syntax_params_requires_path():
+    """CheckSyntaxParams requires a path."""
+    with pytest.raises(ValidationError):
+        CheckSyntaxParams()
+
+
+def test_check_syntax_params_rejects_extra():
+    """CheckSyntaxParams rejects unknown fields."""
+    with pytest.raises(ValidationError):
+        CheckSyntaxParams(path="f.py", extra="bad")
 
 
 # ---------------------------------------------------------------------------

@@ -57,7 +57,19 @@ agents:
   task_agent:
     allowed_tools:
       - "read_file"
+      - "write_file"
       - "list_directory"
+      - "git_status"
+      - "git_diff"
+      - "git_add"
+      - "git_commit"
+      - "git_branch"
+      - "git_rollback"
+      - "git_list_branches"
+      - "git_log"
+      - "run_tests"
+      - "lint"
+      - "check_syntax"
       - "notify_user"
     max_iterations: 10
     approval_required_for: ["high"]
@@ -65,11 +77,18 @@ agents:
     allowed_tools:
       - "read_file"
       - "write_file"
+      - "list_directory"
       - "git_status"
+      - "git_diff"
+      - "git_add"
       - "git_commit"
       - "git_branch"
       - "git_rollback"
+      - "git_list_branches"
+      - "git_log"
       - "run_tests"
+      - "lint"
+      - "check_syntax"
       - "notify_user"
     max_iterations: 10
     approval_required_for: ["high"]
@@ -80,7 +99,7 @@ approval:
 
 logging:
   # DEBUG emits full prompt dumps; INFO is the recommended production level.
-  level: DEBUG
+  level: INFO
 
 context:
   # when the combined context history exceeds these many tokens (currently 1 token == 4 characters) then invoke
@@ -113,4 +132,4 @@ network:
   # Name shown to clients in GET /v1/models and echoed back in responses.
   # The client must send this string in the model field (required by the OpenAI
   # protocol) but the orchestrator ignores it for routing and LLM selection.
-  model_name: "orchestrator"
+  model_name: "germinal"
