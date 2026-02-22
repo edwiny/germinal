@@ -116,6 +116,11 @@ async def test_tool_call_executed_and_logged(tmp_db, registry):
     assert result["tool_calls"][0]["tool"] == "echo"
     assert result["tool_calls"][0]["result"] == {"echo": "hello"}
 
+    assert len(result["steps"]) == 1
+    assert result["steps"][0]["tool"] == "echo"
+    assert result["steps"][0]["parameters"] == {"message": "hello"}
+    assert "I will echo the message" in result["steps"][0]["reasoning"]
+
     with get_conn(tmp_db) as conn:
         tc_rows = conn.execute(
             "SELECT * FROM tool_calls WHERE invocation_id = ?",
@@ -388,3 +393,87 @@ async def test_truncation_written_to_db(tmp_db, registry):
             "SELECT status FROM invocations WHERE id = ?", (result["invocation_id"],)
         ).fetchone()
     assert row["status"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Continuation (multi-chunk response assembly)
+# ---------------------------------------------------------------------------
+
+
+async def test_continuation_assembles_split_tool_call(tmp_db, registry):
+    """A tool call split across two chunks must be assembled and executed.
+
+    First response: truncated mid-JSON (finish_reason='length').
+    Continuation response: completes the JSON (finish_reason='stop').
+    The invoker must concatenate the two chunks, parse the tool call, and
+    execute it — producing status=done as if the JSON had arrived whole.
+    """
+    chunk1 = _mock_response(
+        'I will echo the message.\n'
+        '<tool_call>\n{"tool": "echo", "parameters": {"message":',
+        finish_reason="length",
+    )
+    chunk2 = _mock_response(' "hello"}}\n</tool_call>', finish_reason="stop")
+    done = _mock_response("Done. The echo returned 'hello'.")
+
+    with patch(
+        "core.agent_invoker.litellm.acompletion",
+        new=AsyncMock(side_effect=[chunk1, chunk2, done]),
+    ):
+        result = await invoke(
+            task_description="Echo hello",
+            agent_type="task_agent",
+            model="ollama/llama3.2",
+            registry=registry,
+            db_path=tmp_db,
+        )
+
+    assert result["status"] == "done"
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["tool"] == "echo"
+    assert result["tool_calls"][0]["result"] == {"echo": "hello"}
+
+
+async def test_continuation_assembles_split_final_response(tmp_db, registry):
+    """A plain text final response split across two chunks must be joined."""
+    chunk1 = _mock_response("This is the first part of ", finish_reason="length")
+    chunk2 = _mock_response("the final answer.", finish_reason="stop")
+
+    with patch(
+        "core.agent_invoker.litellm.acompletion",
+        new=AsyncMock(side_effect=[chunk1, chunk2]),
+    ):
+        result = await invoke(
+            task_description="Describe something long",
+            agent_type="task_agent",
+            model="ollama/llama3.2",
+            registry=registry,
+            db_path=tmp_db,
+        )
+
+    assert result["status"] == "done"
+    assert result["response"] == "This is the first part of the final answer."
+
+
+async def test_continuation_cap_exhausted_sets_failed(tmp_db, registry):
+    """If every chunk is truncated the invoker must fail after the cap is reached."""
+    from core.agent_invoker import _MAX_CONTINUATIONS
+
+    truncated = _mock_response('<tool_call>\n{"tool": "echo"', finish_reason="length")
+
+    with patch(
+        "core.agent_invoker.litellm.acompletion",
+        new=AsyncMock(return_value=truncated),
+    ) as mock_llm:
+        result = await invoke(
+            task_description="Truncation cap test",
+            agent_type="task_agent",
+            model="ollama/llama3.2",
+            registry=registry,
+            db_path=tmp_db,
+        )
+
+    assert result["status"] == "failed"
+    assert len(result["tool_calls"]) == 0
+    # initial attempt + _MAX_CONTINUATIONS continuation attempts
+    assert mock_llm.call_count == 1 + _MAX_CONTINUATIONS

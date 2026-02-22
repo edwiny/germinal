@@ -392,7 +392,11 @@ async def test_agent_tool_call_executed_before_final_response(system, caplog):
 
     assert resp.status == 200
     data = await resp.json()
-    assert data["choices"][0]["message"]["content"] == "Done. Notification delivered."
+    content = data["choices"][0]["message"]["content"]
+    # Intermediate reasoning and tool info are prepended before the final response.
+    assert "I will notify the user now." in content
+    assert "[Tool: notify_user" in content
+    assert "Done. Notification delivered." in content
 
     # notify_user logs at INFO — confirms real execution, not just a recorded call.
     assert "E2E ping" in caplog.text

@@ -109,15 +109,19 @@ def build_full_registry(config: dict, db_path: str) -> ToolRegistry:
     return registry
 
 
-def _select_model(config: dict, model_key: str) -> tuple[str, str | None]:
+def _select_model(config: dict, model_key: str) -> tuple[str, str | None, int | None]:
     """
-    Resolve model_key → (litellm model string, api_key | None).
+    Resolve model_key → (litellm model string, api_key | None, max_tokens | None).
 
     model_key is first looked up in models.categories by category name.
     If not found as a category, it is treated as a direct model name in
     models.list. The ORCHESTRATOR_MODEL env var overrides the resolved name
     when model_key is "default", allowing the active model to be changed at
     runtime without editing config.yaml.
+
+    max_tokens is taken from the model entry in config; None means no explicit
+    limit is passed to LiteLLM (the provider's default applies). Set this per
+    model to prevent token-limit truncation of large tool call responses.
     """
     models_cfg = config["models"]
     categories = {c["category"]: c for c in models_cfg.get("categories", [])}
@@ -140,7 +144,8 @@ def _select_model(config: dict, model_key: str) -> tuple[str, str | None]:
     entry = index[resolved_name]
     api_key_env = entry.get("api_key_env", "")
     api_key = os.environ.get(api_key_env) if api_key_env else None
-    return entry["model"], api_key
+    max_tokens: int | None = entry.get("max_tokens")
+    return entry["model"], api_key, max_tokens
 
 
 def _make_approval_gate(db_path: str):
@@ -245,7 +250,7 @@ async def _event_loop(
         # use {payload[agent_type]} in its task_template and set agent_type
         # from the payload; until that rule exists, fall back to routing result.
         agent_type = routing["agent_type"]
-        model, api_key = _select_model(config, routing["model_key"])
+        model, api_key, max_tokens = _select_model(config, routing["model_key"])
         agent_reg = _agent_registry(agent_type, full_registry, config)
         max_iter = config.get("agents", {}).get(agent_type, {}).get("max_iterations", 10)
 
@@ -255,6 +260,7 @@ async def _event_loop(
                 agent_type=agent_type,
                 model=model,
                 api_key=api_key,
+                max_tokens=max_tokens,
                 registry=agent_reg,
                 project_id=project_id,
                 event_id=event_id,

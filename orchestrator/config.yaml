@@ -5,19 +5,26 @@ models:
       # Full list: https://openrouter.ai/models
       model: "openrouter/moonshotai/kimi-k2.5"
       api_key_env: "OPENROUTER_API_KEY"
+      max_tokens: 8192
+    - name: "grok"
+      model: "openrouter/x-ai/grok-code-fast-1"
+      api_key_env: "OPENROUTER_API_KEY"
+      max_tokens: 65536
     - name: "llama3"
       model: "ollama/llama3.2"
       api_key_env: ""
+      max_tokens: 4096
     - name: "claude-sonnet"
       model: "anthropic/claude-sonnet-4-6"
       api_key_env: "ANTHROPIC_API_KEY"
+      max_tokens: 8192
   # Each category maps a named model (by name in the list above) to the task
   # types it should handle. _select_model() in main.py resolves any model_key
   # ("default", "local", "remote") through this table.
   categories:
     - category: "default"
       # ORCHESTRATOR_MODEL env var overrides this at runtime without touching config.
-      model: "kimi-k2"
+      model: "grok"
       used_for: []
     - category: "local"
       model: "llama3"
