@@ -28,7 +28,6 @@ from tools.git import (
 from tools.notify import NotifyUserParams, NotifyUserResult
 from tools.registry import Tool, ToolRegistry, model_to_json_schema
 from tools.shell import RunTestsParams, RunTestsResult, ShellRunParams
-from tools.tasks import ReadTaskListParams, WriteTaskParams, WriteTaskResult
 
 
 # ---------------------------------------------------------------------------
@@ -167,12 +166,6 @@ def test_git_commit_result_shape():
     assert d["success"] is True
 
 
-def test_write_task_result_shape():
-    result = WriteTaskResult(task_id="task_abc123", action="created")
-    d = result.model_dump()
-    assert d == {"task_id": "task_abc123", "action": "created"}
-
-
 def test_run_tests_result_shape():
     result = RunTestsResult(stdout=".", stderr="", returncode=0, passed=True)
     d = result.model_dump()
@@ -213,24 +206,10 @@ def test_shell_run_params_accepts_string():
     assert p.command == "pytest -v"
 
 
-def test_write_task_params_priority_bounds():
-    """Priority outside 1-10 is rejected."""
-    with pytest.raises(ValidationError):
-        WriteTaskParams(priority=0)
-    with pytest.raises(ValidationError):
-        WriteTaskParams(priority=11)
-
-
 def test_git_status_params_rejects_extra():
     """GitStatusParams (empty model with extra='forbid') rejects any extra field."""
     with pytest.raises(ValidationError):
         GitStatusParams(unexpected="field")
-
-
-def test_read_task_list_params_invalid_status_raises():
-    """ReadTaskListParams rejects an unknown status value."""
-    with pytest.raises(ValidationError):
-        ReadTaskListParams(status="archived")
 
 
 # ---------------------------------------------------------------------------

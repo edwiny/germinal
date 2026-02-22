@@ -7,9 +7,8 @@
 #   - Approval gate: approved path (high-risk tool executes)
 #   - Approval gate: denied path (high-risk tool blocked)
 #   - DB tool_calls table populated correctly across multiple calls
-#   - Task tool round-trip: write_task → read_task_list
 #
-# LiteLLM is always mocked; all tool execution (filesystem, notify, tasks) is real.
+# LiteLLM is always mocked; all tool execution (filesystem, notify) is real.
 
 import json
 import logging
@@ -23,7 +22,6 @@ from storage.db import get_conn, init_db
 from tools.filesystem import make_read_file_tool, make_write_file_tool
 from tools.notify import make_notify_user_tool
 from tools.registry import Tool, ToolRegistry, model_to_json_schema
-from tools.tasks import make_read_task_list_tool, make_write_task_tool
 
 
 class _DangerousOpParams(BaseModel):
@@ -58,8 +56,6 @@ def registry(tmp_dir, tmp_db):
     reg.register(make_read_file_tool([tmp_dir]))
     reg.register(make_write_file_tool([tmp_dir]))
     reg.register(make_notify_user_tool())
-    reg.register(make_read_task_list_tool(tmp_db))
-    reg.register(make_write_task_tool(tmp_db))
     return reg
 
 
@@ -408,43 +404,6 @@ async def test_db_records_all_tool_calls(registry, tmp_db, tmp_dir):
     for row in rows:
         parsed = json.loads(row["result"])
         assert isinstance(parsed, dict)
-
-
-# ---------------------------------------------------------------------------
-# Test: task tool round-trip — write_task → read_task_list
-# ---------------------------------------------------------------------------
-
-async def test_write_task_then_read_task_list(registry, tmp_db):
-    """Agent writes a task, then reads the list — the new task must appear."""
-    write_params = {
-        "title": "Implement feature X",
-        "description": "Add the new feature.",
-        "priority": 2,
-    }
-    responses = [
-        _resp(_tool_call_block("write_task", write_params)),
-        _resp(_tool_call_block("read_task_list", {})),
-        _resp("Task created and confirmed in the backlog."),
-    ]
-    result = await _run("Create a task and verify it.", responses, registry, tmp_db)
-
-    assert result["status"] == "done"
-    assert len(result["tool_calls"]) == 2
-
-    write_tc = result["tool_calls"][0]
-    assert write_tc["result"]["action"] == "created"
-    task_id = write_tc["result"]["task_id"]
-    assert task_id.startswith("task_")
-
-    read_tc = result["tool_calls"][1]
-    tasks = read_tc["result"]["tasks"]
-    task_ids_in_list = [t["id"] for t in tasks]
-    assert task_id in task_ids_in_list
-
-    # Priority stored correctly.
-    matching = next(t for t in tasks if t["id"] == task_id)
-    assert matching["title"] == "Implement feature X"
-    assert matching["priority"] == 2
 
 
 # ---------------------------------------------------------------------------

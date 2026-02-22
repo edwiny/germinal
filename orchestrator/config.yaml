@@ -59,8 +59,6 @@ agents:
       - "read_file"
       - "list_directory"
       - "notify_user"
-      - "read_task_list"
-      - "write_task"
     max_iterations: 10
     approval_required_for: ["high"]
   dev_agent:
@@ -73,8 +71,6 @@ agents:
       - "git_rollback"
       - "run_tests"
       - "notify_user"
-      - "read_task_list"
-      - "write_task"
     max_iterations: 10
     approval_required_for: ["high"]
 

@@ -1,6 +1,5 @@
 # Purpose: Rules-based event router.
 # Relationships: Called by main.py's event loop; uses models.categories in config.yaml.
-#               Reads storage/db.py for preflight task-count queries.
 
 # Given an event dict, the router returns a routing decision dict containing
 # agent type, model key, task description, and an optional preflight callable.
@@ -30,14 +29,12 @@ _ROUTING_RULES: list[dict] = [
         "type": "tick",
         "agent_type": "task_agent",
         "model_key": "default",
-        # The tick task is intentionally lightweight: review open tasks and
-        # notify the user if anything needs attention. Local model is preferred
-        # for this classification-style workload (see models.categories in config.yaml).
+        # The tick task is intentionally lightweight: confirm the system is
+        # running and notify the user. Local model is preferred for this
+        # classification-style workload (see models.categories in config.yaml).
         "task_template": (
             "A scheduled timer tick has fired. "
-            "Use read_task_list to check the open task backlog. "
-            "If there are any open tasks, summarise them and notify the user. "
-            "If there is nothing to report, use notify_user to confirm the system is idle."
+            "Use notify_user to confirm the system is running and idle."
         ),
     },
     {
@@ -69,10 +66,9 @@ def route_event(event: dict, config: dict) -> dict:
             "preflight":        Callable[[], bool] | None,
         }
 
-    preflight, if present, is called by the event loop before invoking the
-    LLM. If it returns False the event is marked done and the LLM call is
-    skipped. This avoids burning tokens on no-op ticks (e.g. timer fires
-    when there are no open tasks).
+    preflight is always None in the current rule set. The field is preserved
+    in the return dict so callers do not need updating if a preflight is
+    added in a future phase.
 
     Raises UnroutableEvent if no rule matches.
     """
@@ -91,39 +87,17 @@ def route_event(event: dict, config: dict) -> dict:
                 payload = {}
 
         task_description = _render_template(rule["task_template"], payload)
-        preflight = None
-        if event.get("source") == "timer" and event.get("type") == "tick":
-            db_path = config["paths"]["db"]
-            # Capture db_path in the closure — config["paths"]["db"] could
-            # mutate if config is ever reloaded, so we bind the value now.
-            preflight = lambda _db=db_path: _has_open_tasks(_db)
-
         return {
             "agent_type": rule["agent_type"],
             "model_key": rule["model_key"],
             "task_description": task_description,
-            "preflight": preflight,
+            "preflight": None,
         }
 
     raise UnroutableEvent(
         f"No routing rule matched event source={event.get('source')!r} "
         f"type={event.get('type')!r}"
     )
-
-
-def _has_open_tasks(db_path: str) -> bool:
-    """
-    Return True if there is at least one open task in the backlog.
-
-    Used as the preflight check for timer tick events. A tick with no open
-    tasks is a no-op — skipping the LLM call avoids unnecessary token spend.
-    """
-    from storage.db import get_conn
-    with get_conn(db_path) as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM tasks WHERE status = 'open'"
-        ).fetchone()[0]
-    return count > 0
 
 
 def _render_template(template: str, payload: dict) -> str:

@@ -15,7 +15,6 @@
 #   invocations  List agent invocations
 #   tools        List tool calls
 #   projects     List projects and their context summaries
-#   tasks        List tasks in the backlog
 #   history      Show conversation history for a project
 #   approvals    List human-approval requests
 #   show         Show full detail for a specific record
@@ -366,49 +365,6 @@ def _cmd_projects(args, conn) -> None:
     if not args.json:
         print(f"\n{len(rows)} row(s) shown (limit {args.limit})")
 
-
-def _cmd_tasks(args, conn) -> None:
-    """List tasks in the backlog."""
-    q = """
-        SELECT id, project_id, title, source, priority, status, created_at, updated_at
-        FROM tasks
-        WHERE 1=1
-    """
-    params: list = []
-
-    if args.status:
-        q += " AND status = ?"
-        params.append(args.status)
-    if args.project:
-        q += " AND project_id = ?"
-        params.append(args.project)
-    if args.search:
-        q += " AND (title LIKE ? OR description LIKE ?)"
-        term = f"%{args.search}%"
-        params.extend([term, term])
-
-    q += " ORDER BY priority ASC, created_at DESC LIMIT ?"
-    params.append(args.limit)
-
-    rows = [dict(r) for r in conn.execute(q, params).fetchall()]
-    _print_table(
-        rows,
-        [
-            ("id", "ID", 16),
-            ("project_id", "PROJECT", 12),
-            ("title", "TITLE", 40),
-            ("source", "SOURCE", 12),
-            ("priority", "PRI", 4),
-            ("status", "STATUS", 12),
-            ("updated_at", "UPDATED", 19),
-        ],
-        color_field="status",
-        json_mode=args.json,
-    )
-    if not args.json:
-        print(f"\n{len(rows)} row(s) shown (limit {args.limit})")
-
-
 def _cmd_history(args, conn) -> None:
     """Show conversation history for a project."""
     q = """
@@ -515,8 +471,6 @@ def _cmd_show(args, conn) -> None:
         "tool_calls": "tool_calls",
         "project": "projects",
         "projects": "projects",
-        "task": "tasks",
-        "tasks": "tasks",
         "history": "history",
         "approval": "approvals",
         "approvals": "approvals",
@@ -542,7 +496,7 @@ def _cmd_show(args, conn) -> None:
 
 def _cmd_stats(args, conn) -> None:
     """Print a summary count of rows in every table."""
-    tables = ["events", "invocations", "tool_calls", "approvals", "projects", "tasks", "history"]
+    tables = ["events", "invocations", "tool_calls", "approvals", "projects", "history"]
     stats = {}
     for table in tables:
         count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
@@ -576,7 +530,6 @@ examples:
   germctl invocations --status done --project default
   germctl invocations --search "error"
   germctl tools --tool-name read_file
-  germctl tasks --status open
   germctl history --project default --limit 50
   germctl approvals --pending
   germctl show events <id>
@@ -633,16 +586,6 @@ examples:
     p_proj.add_argument("--search", metavar="TEXT", help="Search name and description")
     p_proj.add_argument("--limit", type=int, default=50, metavar="N")
 
-    # ---- tasks -------------------------------------------------------------
-    p_tasks = sub.add_parser("tasks", help="List tasks in the backlog")
-    p_tasks.add_argument(
-        "--status",
-        choices=["open", "in_progress", "done", "cancelled"],
-    )
-    p_tasks.add_argument("--project", metavar="ID", help="Filter by project_id")
-    p_tasks.add_argument("--search", metavar="TEXT", help="Search title and description")
-    p_tasks.add_argument("--limit", type=int, default=50, metavar="N")
-
     # ---- history -----------------------------------------------------------
     p_hist = sub.add_parser("history", help="Show conversation history for a project")
     p_hist.add_argument("--project", metavar="ID", help="Filter by project_id")
@@ -661,7 +604,7 @@ examples:
     p_show.add_argument(
         "table",
         metavar="TABLE",
-        help="Table name: events, invocations, tools, projects, tasks, history, approvals",
+        help="Table name: events, invocations, tools, projects, history, approvals",
     )
     p_show.add_argument("id", metavar="ID", help="Record id")
 
@@ -680,7 +623,6 @@ _COMMAND_MAP = {
     "invocations": _cmd_invocations,
     "tools": _cmd_tools,
     "projects": _cmd_projects,
-    "tasks": _cmd_tasks,
     "history": _cmd_history,
     "approvals": _cmd_approvals,
     "show": _cmd_show,
