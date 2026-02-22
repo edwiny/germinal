@@ -11,8 +11,37 @@
 import hashlib
 import json
 from datetime import datetime, timezone
+from typing import Any, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from storage.db import get_conn
+
+
+class EventEnvelope(BaseModel):
+    """
+    Validated envelope for an event entering the queue.
+
+    Adapters construct this model before calling push_event so that
+    malformed events — wrong types, missing required fields, out-of-range
+    priority — are caught at the adapter boundary rather than reaching the
+    queue or the router with bad data.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(description="Event source (e.g. 'timer', 'user', 'email').")
+    type: str = Field(description="Event type (e.g. 'tick', 'message').")
+    payload: dict[str, Any] = Field(description="JSON-serialisable event payload.")
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Project ID to assign the event to, or None for the inbox.",
+    )
+    priority: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Priority 1 (highest urgency) to 10 (lowest).",
+    )
 
 
 # [INVARIANT] Only one consumer (the main event loop) calls dequeue_next_event().

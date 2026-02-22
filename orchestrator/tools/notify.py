@@ -4,10 +4,28 @@
 #               the transport without changing the tool interface.
 
 import logging
+from typing import Literal
 
-from tools.registry import Tool
+from pydantic import BaseModel, ConfigDict, Field
+
+from tools.registry import Tool, model_to_json_schema
 
 logger = logging.getLogger("notify")
+
+
+class NotifyUserParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(description="The message text to deliver to the user.")
+    level: Literal["info", "warning", "error"] = Field(
+        default="info",
+        description="Severity level. Defaults to 'info'.",
+    )
+
+
+class NotifyUserResult(BaseModel):
+    delivered: bool = Field(description="True if the notification was delivered.")
+    channel: str = Field(description="Delivery channel used (e.g. 'terminal').")
 
 
 def make_notify_user_tool() -> Tool:
@@ -23,7 +41,7 @@ def make_notify_user_tool() -> Tool:
             level, logger.info
         )
         log_fn("[NOTIFY] %s", message)
-        return {"delivered": True, "channel": "terminal"}
+        return NotifyUserResult(delivered=True, channel="terminal").model_dump()
 
     return Tool(
         name="notify_user",
@@ -31,23 +49,9 @@ def make_notify_user_tool() -> Tool:
             "Send a notification message to the user. "
             "Use this to report task completion, errors, or important findings."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "description": "The message text to deliver to the user.",
-                },
-                "level": {
-                    "type": "string",
-                    "enum": ["info", "warning", "error"],
-                    "description": "Severity level. Defaults to 'info'.",
-                },
-            },
-            "required": ["message"],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(NotifyUserParams),
         risk_level="low",
         allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
+        params_model=NotifyUserParams,
     )

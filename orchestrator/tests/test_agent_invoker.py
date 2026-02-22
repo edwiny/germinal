@@ -5,10 +5,16 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
 from core.agent_invoker import invoke
 from storage.db import get_conn, init_db
-from tools.registry import Tool, ToolRegistry
+from tools.registry import Tool, ToolRegistry, model_to_json_schema
+
+
+class _EchoParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(description="Message to echo.")
 
 
 # ---------------------------------------------------------------------------
@@ -35,15 +41,11 @@ def registry():
         Tool(
             name="echo",
             description="Echo a message back.",
-            parameters_schema={
-                "type": "object",
-                "properties": {"message": {"type": "string"}},
-                "required": ["message"],
-                "additionalProperties": False,
-            },
+            parameters_schema=model_to_json_schema(_EchoParams),
             risk_level="low",
             allowed_agents=["task_agent"],
             _execute=echo_execute,
+            params_model=_EchoParams,
         )
     )
     return reg

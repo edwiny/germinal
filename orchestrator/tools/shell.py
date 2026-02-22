@@ -7,8 +7,11 @@
 # Relationships: Registered into tools/registry.py; allowlist from config.yaml.
 
 import subprocess
+from typing import Optional, Union
 
-from tools.registry import Tool
+from pydantic import BaseModel, ConfigDict, Field
+
+from tools.registry import Tool, model_to_json_schema
 
 # Timeout for shell_run commands in seconds. Long-running commands should
 # use a dedicated tool rather than increasing this limit.
@@ -33,6 +36,29 @@ def _is_allowed_command(command: list[str], allowlist: list[str]) -> bool:
     if not command:
         return False
     return command[0] in allowlist
+
+
+# ---------------------------------------------------------------------------
+# shell_run
+# ---------------------------------------------------------------------------
+
+class ShellRunParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Accepts a list (preferred) or a whitespace-separated string for
+    # convenience. Both paths reach subprocess.run() with shell=False.
+    command: Union[list[str], str] = Field(
+        description=(
+            "Command and arguments as a list (e.g. ['git', 'status']) "
+            "or whitespace-separated string."
+        ),
+    )
+
+
+class ShellRunResult(BaseModel):
+    stdout: str = Field(description="Standard output from the command.")
+    stderr: str = Field(description="Standard error from the command.")
+    returncode: int = Field(description="Return code from the command.")
 
 
 def make_shell_run_tool(allowlist: list[str]) -> Tool:
@@ -68,11 +94,11 @@ def make_shell_run_tool(allowlist: list[str]) -> Tool:
                 # that this must never be changed to shell=True.
                 shell=False,
             )
-            return {
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
-                "returncode": proc.returncode,
-            }
+            return ShellRunResult(
+                stdout=proc.stdout,
+                stderr=proc.stderr,
+                returncode=proc.returncode,
+            ).model_dump()
         except subprocess.TimeoutExpired:
             return {"error": f"Command timed out after {_SHELL_TIMEOUT}s"}
         except FileNotFoundError:
@@ -87,32 +113,36 @@ def make_shell_run_tool(allowlist: list[str]) -> Tool:
             "of strings (e.g. ['git', 'status']). Only commands whose base name appears "
             "in the shell_allowlist config key are permitted."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "command": {
-                    "oneOf": [
-                        {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 1,
-                            "description": "Command and arguments as a list.",
-                        },
-                        {
-                            "type": "string",
-                            "description": "Command and arguments as a whitespace-separated string.",
-                        },
-                    ],
-                    "description": "Command to run.",
-                }
-            },
-            "required": ["command"],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(ShellRunParams),
         risk_level="high",
         allowed_agents=["dev_agent"],
         _execute=execute,
+        params_model=ShellRunParams,
     )
+
+
+# ---------------------------------------------------------------------------
+# run_tests
+# ---------------------------------------------------------------------------
+
+class RunTestsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: Optional[str] = Field(
+        default=None,
+        description="Optional path to pass to pytest (file or directory).",
+    )
+    verbose: bool = Field(
+        default=False,
+        description="If true, pass -v to pytest for verbose output.",
+    )
+
+
+class RunTestsResult(BaseModel):
+    stdout: str = Field(description="Standard output from pytest.")
+    stderr: str = Field(description="Standard error from pytest.")
+    returncode: int = Field(description="Return code from pytest.")
+    passed: bool = Field(description="True if all tests passed (returncode 0).")
 
 
 def make_run_tests_tool() -> Tool:
@@ -138,12 +168,12 @@ def make_run_tests_tool() -> Tool:
                 timeout=_TEST_TIMEOUT,
                 shell=False,
             )
-            return {
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
-                "returncode": proc.returncode,
-                "passed": proc.returncode == 0,
-            }
+            return RunTestsResult(
+                stdout=proc.stdout,
+                stderr=proc.stderr,
+                returncode=proc.returncode,
+                passed=proc.returncode == 0,
+            ).model_dump()
         except subprocess.TimeoutExpired:
             return {"error": f"Tests timed out after {_TEST_TIMEOUT}s", "passed": False}
         except FileNotFoundError:
@@ -157,22 +187,9 @@ def make_run_tests_tool() -> Tool:
             "Run the pytest test suite and return the output. "
             "Optionally restrict to a path or enable verbose output."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Optional path to pass to pytest (file or directory).",
-                },
-                "verbose": {
-                    "type": "boolean",
-                    "description": "If true, pass -v to pytest for verbose output.",
-                },
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(RunTestsParams),
         risk_level="low",
         allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
+        params_model=RunTestsParams,
     )

@@ -9,9 +9,11 @@
 #               allowed paths come from config.yaml loaded in main.py.
 
 from pathlib import Path
+from typing import Any, Optional
 
-from tools.registry import Tool
+from pydantic import BaseModel, ConfigDict, Field
 
+from tools.registry import Tool, model_to_json_schema
 
 
 def _is_allowed(path: str, allowed_paths: list[str]) -> bool:
@@ -34,6 +36,21 @@ def _is_allowed(path: str, allowed_paths: list[str]) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# read_file
+# ---------------------------------------------------------------------------
+
+class ReadFileParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(description="Path to the file to read.")
+
+
+class ReadFileResult(BaseModel):
+    content: str = Field(description="Full UTF-8 text content of the file.")
+    path: str = Field(description="Resolved path that was read.")
+
+
 def make_read_file_tool(allowed_paths: list[str]) -> Tool:
     """Return a read_file Tool restricted to the given allowed_paths."""
 
@@ -45,7 +62,7 @@ def make_read_file_tool(allowed_paths: list[str]) -> Tool:
             return {"error": f"Path not in allowed_read list: {path!r}"}
         try:
             content = Path(path).read_text(encoding="utf-8")
-            return {"content": content, "path": path}
+            return ReadFileResult(content=content, path=path).model_dump()
         except FileNotFoundError:
             return {"error": f"File not found: {path!r}"}
         except Exception as exc:
@@ -57,21 +74,29 @@ def make_read_file_tool(allowed_paths: list[str]) -> Tool:
             "Read the full text content of a file. "
             "Only paths within the configured allowed_read list are accessible."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file to read.",
-                }
-            },
-            "required": ["path"],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(ReadFileParams),
         risk_level="low",
         allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
+        params_model=ReadFileParams,
     )
+
+
+# ---------------------------------------------------------------------------
+# write_file
+# ---------------------------------------------------------------------------
+
+class WriteFileParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(description="Path to the file to write.")
+    content: str = Field(description="Text content to write.")
+
+
+class WriteFileResult(BaseModel):
+    success: bool = Field(description="True if the file was written successfully.")
+    path: str = Field(description="Path that was written.")
+    bytes_written: int = Field(description="Number of bytes written.")
 
 
 def make_write_file_tool(allowed_paths: list[str]) -> Tool:
@@ -87,7 +112,11 @@ def make_write_file_tool(allowed_paths: list[str]) -> Tool:
             # behaviour a human would expect when writing to a new path.
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(params["content"], encoding="utf-8")
-            return {"success": True, "path": path, "bytes_written": len(params["content"])}
+            return WriteFileResult(
+                success=True,
+                path=path,
+                bytes_written=len(params["content"]),
+            ).model_dump()
         except Exception as exc:
             return {"error": str(exc)}
 
@@ -98,24 +127,33 @@ def make_write_file_tool(allowed_paths: list[str]) -> Tool:
             "Only paths within the configured allowed_write list are writable. "
             "Overwrites the file if it already exists."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file to write.",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Text content to write.",
-                },
-            },
-            "required": ["path", "content"],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(WriteFileParams),
         risk_level="medium",
         allowed_agents=["dev_agent"],
         _execute=execute,
+        params_model=WriteFileParams,
+    )
+
+
+# ---------------------------------------------------------------------------
+# list_directory
+# ---------------------------------------------------------------------------
+
+class ListDirectoryParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(description="Path to the directory to list.")
+
+
+class DirectoryEntry(BaseModel):
+    name: str = Field(description="Entry name (filename or directory name).")
+    type: str = Field(description="'file' or 'dir'.")
+
+
+class ListDirectoryResult(BaseModel):
+    path: str = Field(description="The directory that was listed.")
+    entries: list[dict[str, Any]] = Field(
+        description="Directory entries sorted by name, directories first.",
     )
 
 
@@ -131,13 +169,11 @@ def make_list_directory_tool(allowed_paths: list[str]) -> Tool:
             if not p.is_dir():
                 return {"error": f"Not a directory: {path!r}"}
             entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
-            return {
-                "path": path,
-                "entries": [
-                    {"name": e.name, "type": "dir" if e.is_dir() else "file"}
-                    for e in entries
-                ],
-            }
+            entry_dicts = [
+                DirectoryEntry(name=e.name, type="dir" if e.is_dir() else "file").model_dump()
+                for e in entries
+            ]
+            return ListDirectoryResult(path=path, entries=entry_dicts).model_dump()
         except Exception as exc:
             return {"error": str(exc)}
 
@@ -148,18 +184,9 @@ def make_list_directory_tool(allowed_paths: list[str]) -> Tool:
             "Returns entry names and types (file or dir). "
             "Only paths within the configured allowed_read list are accessible."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the directory to list.",
-                }
-            },
-            "required": ["path"],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(ListDirectoryParams),
         risk_level="low",
         allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
+        params_model=ListDirectoryParams,
     )

@@ -1,6 +1,9 @@
 -- Orchestrator SQLite schema.
 -- All tables are created with IF NOT EXISTS so this file is safe to re-run.
 
+-- Mental model:
+--- projects is the long-term memory, history is the working memory, and everything else is the audit trail.
+
 CREATE TABLE IF NOT EXISTS events (
     id           TEXT PRIMARY KEY,  -- deterministic hash of source+content+hour
     source       TEXT NOT NULL,     -- 'timer', 'email', 'user', etc.

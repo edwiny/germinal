@@ -7,7 +7,9 @@
 
 import subprocess
 
-from tools.registry import Tool
+from pydantic import BaseModel, ConfigDict, Field
+
+from tools.registry import Tool, model_to_json_schema
 
 _GIT_TIMEOUT = 60  # seconds; git operations on a local repo should never take longer
 
@@ -40,6 +42,22 @@ def _git(args: list[str]) -> dict:
         return {"stdout": "", "stderr": str(exc), "returncode": -1}
 
 
+# ---------------------------------------------------------------------------
+# git_status
+# ---------------------------------------------------------------------------
+
+class GitStatusParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # No parameters — git_status always reports current repo state.
+
+
+class GitStatusResult(BaseModel):
+    branch: str = Field(description="Current branch name.")
+    status: str = Field(description="Working tree status in short format.")
+    diff_stat: str = Field(description="Diff stat against HEAD.")
+    returncode: int = Field(description="Return code from git status.")
+
+
 def make_git_status_tool() -> Tool:
     """Return a git_status tool that reports current repo state."""
 
@@ -47,12 +65,12 @@ def make_git_status_tool() -> Tool:
         status = _git(["status", "--short"])
         diff_stat = _git(["diff", "--stat", "HEAD"])
         branch = _git(["rev-parse", "--abbrev-ref", "HEAD"])
-        return {
-            "branch": branch["stdout"],
-            "status": status["stdout"],
-            "diff_stat": diff_stat["stdout"],
-            "returncode": status["returncode"],
-        }
+        return GitStatusResult(
+            branch=branch["stdout"],
+            status=status["stdout"],
+            diff_stat=diff_stat["stdout"],
+            returncode=status["returncode"],
+        ).model_dump()
 
     return Tool(
         name="git_status",
@@ -60,16 +78,29 @@ def make_git_status_tool() -> Tool:
             "Return the current git branch, working tree status (short format), "
             "and a diff stat against HEAD."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(GitStatusParams),
         risk_level="low",
         allowed_agents=["dev_agent"],
         _execute=execute,
+        params_model=GitStatusParams,
     )
+
+
+# ---------------------------------------------------------------------------
+# git_commit
+# ---------------------------------------------------------------------------
+
+class GitCommitParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, description="Commit message.")
+
+
+class GitCommitResult(BaseModel):
+    stdout: str = Field(description="Standard output from git commit.")
+    stderr: str = Field(description="Standard error from git commit.")
+    returncode: int = Field(description="Return code from git commit.")
+    success: bool = Field(description="True if the commit succeeded (returncode 0).")
 
 
 def make_git_commit_tool() -> Tool:
@@ -78,12 +109,12 @@ def make_git_commit_tool() -> Tool:
     def execute(params: dict) -> dict:
         message = params["message"]
         result = _git(["commit", "-m", message])
-        return {
-            "stdout": result["stdout"],
-            "stderr": result["stderr"],
-            "returncode": result["returncode"],
-            "success": result["returncode"] == 0,
-        }
+        return GitCommitResult(
+            stdout=result["stdout"],
+            stderr=result["stderr"],
+            returncode=result["returncode"],
+            success=result["returncode"] == 0,
+        ).model_dump()
 
     return Tool(
         name="git_commit",
@@ -92,22 +123,33 @@ def make_git_commit_tool() -> Tool:
             "Stage files first with shell_run(['git', 'add', '<path>']) before calling this. "
             "Returns success=false if there is nothing staged or another error occurs."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "description": "Commit message.",
-                    "minLength": 1,
-                }
-            },
-            "required": ["message"],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(GitCommitParams),
         risk_level="medium",
         allowed_agents=["dev_agent"],
         _execute=execute,
+        params_model=GitCommitParams,
     )
+
+
+# ---------------------------------------------------------------------------
+# git_branch
+# ---------------------------------------------------------------------------
+
+class GitBranchParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, description="Branch name to switch to or create.")
+    create: bool = Field(
+        default=False,
+        description="If true, create the branch before switching.",
+    )
+
+
+class GitBranchResult(BaseModel):
+    stdout: str = Field(description="Standard output from git checkout.")
+    stderr: str = Field(description="Standard error from git checkout.")
+    returncode: int = Field(description="Return code from git checkout.")
+    success: bool = Field(description="True if the branch operation succeeded.")
 
 
 def make_git_branch_tool() -> Tool:
@@ -122,12 +164,12 @@ def make_git_branch_tool() -> Tool:
         else:
             result = _git(["checkout", name])
 
-        return {
-            "stdout": result["stdout"],
-            "stderr": result["stderr"],
-            "returncode": result["returncode"],
-            "success": result["returncode"] == 0,
-        }
+        return GitBranchResult(
+            stdout=result["stdout"],
+            stderr=result["stderr"],
+            returncode=result["returncode"],
+            success=result["returncode"] == 0,
+        ).model_dump()
 
     return Tool(
         name="git_branch",
@@ -135,26 +177,38 @@ def make_git_branch_tool() -> Tool:
             "Switch to an existing branch or create and switch to a new one. "
             "Set create=true to create a new branch from the current HEAD."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Branch name to switch to or create.",
-                    "minLength": 1,
-                },
-                "create": {
-                    "type": "boolean",
-                    "description": "If true, create the branch before switching.",
-                },
-            },
-            "required": ["name"],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(GitBranchParams),
         risk_level="medium",
         allowed_agents=["dev_agent"],
         _execute=execute,
+        params_model=GitBranchParams,
     )
+
+
+# ---------------------------------------------------------------------------
+# git_rollback
+# ---------------------------------------------------------------------------
+
+class GitRollbackParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    to_commit: str = Field(
+        min_length=1,
+        description="Commit hash or ref to reset to.",
+    )
+    reason: str = Field(
+        default="",
+        description="Why this rollback is needed (shown in the approval prompt).",
+    )
+
+
+class GitRollbackResult(BaseModel):
+    stdout: str = Field(description="Standard output from git reset.")
+    stderr: str = Field(description="Standard error from git reset.")
+    returncode: int = Field(description="Return code from git reset.")
+    success: bool = Field(description="True if the rollback succeeded.")
+    rolled_back_to: str = Field(description="The commit ref that was reset to.")
+    reason: str = Field(description="The stated reason for the rollback.")
 
 
 def make_git_rollback_tool() -> Tool:
@@ -168,14 +222,14 @@ def make_git_rollback_tool() -> Tool:
         reason = params.get("reason", "")
 
         result = _git(["reset", "--hard", to_commit])
-        return {
-            "stdout": result["stdout"],
-            "stderr": result["stderr"],
-            "returncode": result["returncode"],
-            "success": result["returncode"] == 0,
-            "rolled_back_to": to_commit,
-            "reason": reason,
-        }
+        return GitRollbackResult(
+            stdout=result["stdout"],
+            stderr=result["stderr"],
+            returncode=result["returncode"],
+            success=result["returncode"] == 0,
+            rolled_back_to=to_commit,
+            reason=reason,
+        ).model_dump()
 
     return Tool(
         name="git_rollback",
@@ -184,23 +238,9 @@ def make_git_rollback_tool() -> Tool:
             "DESTRUCTIVE: uncommitted changes are lost. Always requires human approval. "
             "Provide a reason so the approval prompt is informative."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "to_commit": {
-                    "type": "string",
-                    "description": "Commit hash or ref to reset to.",
-                    "minLength": 1,
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why this rollback is needed (shown in the approval prompt).",
-                },
-            },
-            "required": ["to_commit"],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(GitRollbackParams),
         risk_level="high",
         allowed_agents=["dev_agent"],
         _execute=execute,
+        params_model=GitRollbackParams,
     )
