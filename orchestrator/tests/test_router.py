@@ -4,8 +4,8 @@
 
 import pytest
 
-from core.router import UnroutableEvent, _has_open_tasks, route_event
-from storage.db import get_conn, init_db
+from core.router import UnroutableEvent, route_event
+from storage.db import init_db
 
 
 # Config must include paths.db because the timer tick rule creates a
@@ -86,11 +86,11 @@ def test_payload_as_dict_is_also_accepted(config):
 # Preflight
 # ---------------------------------------------------------------------------
 
-def test_timer_tick_has_preflight(config):
-    """Timer tick routing must include a preflight callable."""
+def test_timer_tick_has_no_preflight(config):
+    """Timer tick routing must have preflight=None (no task backlog to check)."""
     event = {"source": "timer", "type": "tick", "payload": '{"minute": "2026-01-01T00:00"}'}
     result = route_event(event, config)
-    assert callable(result["preflight"])
+    assert result["preflight"] is None
 
 
 def test_user_message_has_no_preflight(config):
@@ -98,42 +98,3 @@ def test_user_message_has_no_preflight(config):
     event = {"source": "user", "type": "message", "payload": '{"message": "hi"}'}
     result = route_event(event, config)
     assert result["preflight"] is None
-
-
-def test_preflight_returns_false_with_no_open_tasks(config):
-    """Preflight must return False when the tasks table has no open tasks."""
-    event = {"source": "timer", "type": "tick", "payload": '{"minute": "2026-01-01T00:00"}'}
-    result = route_event(event, config)
-    assert result["preflight"]() is False
-
-
-def test_preflight_returns_true_with_open_tasks(config, tmp_db):
-    """Preflight must return True when at least one open task exists."""
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-    with get_conn(tmp_db) as conn:
-        conn.execute(
-            "INSERT INTO tasks (id, title, source, status, created_at, updated_at) "
-            "VALUES ('t1', 'Test task', 'user', 'open', ?, ?)",
-            (now, now),
-        )
-
-    event = {"source": "timer", "type": "tick", "payload": '{"minute": "2026-01-01T00:00"}'}
-    result = route_event(event, config)
-    assert result["preflight"]() is True
-
-
-def test_preflight_ignores_non_open_tasks(config, tmp_db):
-    """Preflight must return False when tasks exist but none are open."""
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-    with get_conn(tmp_db) as conn:
-        conn.execute(
-            "INSERT INTO tasks (id, title, source, status, created_at, updated_at) "
-            "VALUES ('t1', 'Done task', 'user', 'done', ?, ?)",
-            (now, now),
-        )
-
-    event = {"source": "timer", "type": "tick", "payload": '{"minute": "2026-01-01T00:00"}'}
-    result = route_event(event, config)
-    assert result["preflight"]() is False

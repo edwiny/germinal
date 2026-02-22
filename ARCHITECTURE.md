@@ -139,20 +139,13 @@ Implements `git_status`, `git_commit`, `git_branch`, `git_rollback`. All use
 `subprocess.run(..., shell=False)` with fixed argv arrays. Each tool defines
 Pydantic params and result models.
 
-### `tools/tasks.py`
-Implements `read_task_list` and `write_task` over the `tasks` DB table. Both
-tools define Pydantic params and result models. `WriteTaskParams` uses all-
-optional fields (all `default=None`); the registry calls
-`model_dump(exclude_unset=True)` so the execute function's `if field in params`
-pattern correctly detects which fields the caller actually supplied.
-
 ### `tools/notify.py`
 Implements `notify_user`. Phase 1 transport is stderr. Interface is stable.
 Defines `NotifyUserParams` and `NotifyUserResult`.
 
 ### `storage/schema.sql`
 All table definitions. Safe to re-run (uses `IF NOT EXISTS`). Tables:
-`events`, `invocations`, `tool_calls`, `approvals`, `projects`, `history`, `tasks`.
+`events`, `invocations`, `tool_calls`, `approvals`, `projects`, `history`.
 
 ### `storage/db.py`
 `init_db()` loads and executes `schema.sql`. `get_conn()` is a context manager
@@ -266,7 +259,7 @@ Date: 2026-02-20
 Status: active
 
 **Decision:** Use SQLite for the event queue, invocation log, tool call log,
-projects, history, and task backlog. No external broker (Redis, RabbitMQ, etc.).
+projects, and history. No external broker (Redis, RabbitMQ, etc.).
 
 **Reasoning:** The system runs on a single host. SQLite with WAL mode provides
 sufficient concurrent read throughput for the expected event rates. A separate

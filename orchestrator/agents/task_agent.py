@@ -3,9 +3,9 @@
 #               agent_type string matched against config.yaml agents section.
 
 # The task_agent is the general-purpose agent for routine work:
-# reading tasks, reading files, and notifying the user. It deliberately
-# has a small tool surface so that most of its actions are low-risk
-# and do not require approval.
+# reading files and notifying the user. It deliberately has a small
+# tool surface so that most of its actions are low-risk and do not
+# require approval.
 
 from tools.registry import ToolRegistry
 

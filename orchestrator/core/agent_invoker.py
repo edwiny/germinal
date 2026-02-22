@@ -114,7 +114,10 @@ async def invoke(
 
         call_request = _parse_tool_call(assistant_text)
         if call_request is None:
-            # No tool call emitted — agent has finished.
+            # The agent is done when it stops emitting tool calls. That's it. 
+            # The orchestrator has no independent view of whether the work is actually complete — it just trusts that if the model
+            # produced a response with no <tool_call> block, the job is finished.
+            # TODO: improve task completion evaluation criteria
             final_response = assistant_text
             status = "done"
             break

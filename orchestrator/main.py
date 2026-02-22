@@ -50,7 +50,6 @@ from tools.git import (
 from tools.notify import make_notify_user_tool
 from tools.registry import ToolRegistry
 from tools.shell import make_run_tests_tool, make_shell_run_tool
-from tools.tasks import make_read_task_list_tool, make_write_task_tool
 
 # Poll interval when the event queue is empty. 500ms balances responsiveness
 # against unnecessary CPU spin. Do not set below ~100ms on SQLite.
@@ -101,8 +100,6 @@ def build_full_registry(config: dict, db_path: str) -> ToolRegistry:
     registry.register(make_git_commit_tool())
     registry.register(make_git_branch_tool())
     registry.register(make_git_rollback_tool())
-    registry.register(make_read_task_list_tool(db_path))
-    registry.register(make_write_task_tool(db_path))
     return registry
 
 

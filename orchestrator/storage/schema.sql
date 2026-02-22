@@ -70,14 +70,3 @@ CREATE TABLE IF NOT EXISTS history (
     created_at  TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS tasks (
-    id          TEXT PRIMARY KEY,
-    project_id  TEXT REFERENCES projects(id),
-    title       TEXT NOT NULL,
-    description TEXT,
-    source      TEXT,              -- 'user' | 'reflection' | 'agent'
-    priority    INTEGER DEFAULT 5,
-    status      TEXT DEFAULT 'open', -- open | in_progress | done | cancelled
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-);
