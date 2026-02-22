@@ -3,12 +3,18 @@
 #         schema_for_agent output format, allowed_agents list.
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
-from tools.registry import Tool, ToolRegistry
+from tools.registry import Tool, ToolRegistry, model_to_json_schema
+
+
+class _EchoParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(description="Message to echo.")
 
 
 def _make_tool(name="echo", risk_level="low", allowed_agents=None) -> Tool:
-    """Return a minimal test tool."""
+    """Return a minimal test tool backed by a Pydantic params model."""
     if allowed_agents is None:
         allowed_agents = ["task_agent"]
 
@@ -18,15 +24,11 @@ def _make_tool(name="echo", risk_level="low", allowed_agents=None) -> Tool:
     return Tool(
         name=name,
         description="Echo a message.",
-        parameters_schema={
-            "type": "object",
-            "properties": {"message": {"type": "string"}},
-            "required": ["message"],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(_EchoParams),
         risk_level=risk_level,
         allowed_agents=allowed_agents,
         _execute=_execute,
+        params_model=_EchoParams,
     )
 
 

@@ -76,7 +76,13 @@ async def invoke(
     tool_calls_log: list[dict] = []
 
     system_prompt = build_system_prompt(registry.schema_for_agent())
-    messages = [{"role": "system", "content": system_prompt}]
+    messages = [
+        {
+            "role": "system", 
+            "content": system_prompt, 
+            "cache_control": {"type": "ephemeral"}
+        }
+    ]
     if project_id and db_path and config:
         ctx = assemble_context(project_id, db_path, config)
         if ctx:
@@ -98,6 +104,9 @@ async def invoke(
 
     for iteration in range(max_iterations):
         _log_outgoing(messages[-1], iteration)
+        # uncomment here if you want the full prompt printed
+        # logger.debug("→ LLM FULL PROMPT iter=%d\n%s", iteration + 1, json.dumps(messages, indent=2))
+
         raw = await litellm.acompletion(model=model, messages=messages, api_key=api_key)
         assistant_text: str = raw.choices[0].message.content or ""
         _log_incoming(assistant_text, iteration)

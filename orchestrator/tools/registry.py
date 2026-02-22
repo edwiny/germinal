@@ -11,28 +11,46 @@
 from dataclasses import dataclass, field
 from typing import Callable
 
-import jsonschema
+from pydantic import BaseModel, ValidationError
+
+
+def model_to_json_schema(model: type[BaseModel]) -> dict:
+    """
+    Generate a JSON Schema dict from a Pydantic BaseModel class.
+
+    Use this to populate Tool.parameters_schema so that the agent-prompt
+    schema and the runtime validation schema are always derived from the
+    same source and can never drift apart. Do not write the schema by
+    hand for any tool.
+    """
+    return model.model_json_schema()
 
 
 @dataclass
 class Tool:
     name: str
     description: str
-    parameters_schema: dict   # JSON Schema — validated before every execute()
+    parameters_schema: dict   # JSON Schema — injected into agent prompts
     risk_level: str           # 'low' | 'medium' | 'high'
     allowed_agents: list[str]
     _execute: Callable[[dict], dict] = field(repr=False)
+    params_model: type[BaseModel] = field(repr=False)
 
     def execute(self, parameters: dict) -> dict:
         # [INVARIANT] Parameters are always validated before execution.
         # Never call _execute directly — always go through this method.
         # Skipping validation here would allow malformed inputs to reach
         # tool implementations that assume clean data.
+        #
+        # model_dump(exclude_unset=True) returns only the fields the caller
+        # explicitly provided, so execute functions can keep using .get()
+        # with fallback defaults and "if field in params" patterns without
+        # behaviour changes.
         try:
-            jsonschema.validate(parameters, self.parameters_schema)
-        except jsonschema.ValidationError as exc:
-            return {"error": f"Parameter validation failed: {exc.message}"}
-        return self._execute(parameters)
+            validated = self.params_model.model_validate(parameters)
+        except ValidationError as exc:
+            return {"error": f"Parameter validation failed: {exc}"}
+        return self._execute(validated.model_dump(exclude_unset=True))
 
 
 class ToolRegistry:

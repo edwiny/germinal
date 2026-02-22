@@ -2,12 +2,32 @@
 # Relationships: Reads/writes the `tasks` table via storage/db.py.
 #               Registered into tools/registry.py; used by task_agent and dev_agent.
 
-import json
 import uuid
 from datetime import datetime, timezone
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from storage.db import get_conn
-from tools.registry import Tool
+from tools.registry import Tool, model_to_json_schema
+
+
+# ---------------------------------------------------------------------------
+# read_task_list
+# ---------------------------------------------------------------------------
+
+class ReadTaskListParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["open", "in_progress", "done", "cancelled"] = Field(
+        default="open",
+        description="Filter by task status. Defaults to 'open'.",
+    )
+
+
+class ReadTaskListResult(BaseModel):
+    tasks: list[dict[str, Any]] = Field(description="List of task rows from the DB.")
+    count: int = Field(description="Number of tasks returned.")
 
 
 def make_read_task_list_tool(db_path: str) -> Tool:
@@ -26,7 +46,8 @@ def make_read_task_list_tool(db_path: str) -> Tool:
                 """,
                 (status_filter,),
             ).fetchall()
-        return {"tasks": [dict(row) for row in rows], "count": len(rows)}
+        task_list = [dict(row) for row in rows]
+        return ReadTaskListResult(tasks=task_list, count=len(task_list)).model_dump()
 
     return Tool(
         name="read_task_list",
@@ -34,21 +55,57 @@ def make_read_task_list_tool(db_path: str) -> Tool:
             "Read the task backlog. Returns tasks ordered by priority (1=highest). "
             "Defaults to open tasks; pass status='in_progress' or 'done' to filter."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "enum": ["open", "in_progress", "done", "cancelled"],
-                    "description": "Filter by task status. Defaults to 'open'.",
-                }
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(ReadTaskListParams),
         risk_level="low",
         allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
+        params_model=ReadTaskListParams,
+    )
+
+
+# ---------------------------------------------------------------------------
+# write_task
+# ---------------------------------------------------------------------------
+
+class WriteTaskParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: Optional[str] = Field(
+        default=None,
+        description="ID of an existing task to update. Omit to create new.",
+    )
+    title: Optional[str] = Field(
+        default=None,
+        description="Task title (required for new tasks).",
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Detailed task description.",
+    )
+    source: Optional[Literal["user", "agent", "reflection"]] = Field(
+        default=None,
+        description="Who created the task.",
+    )
+    priority: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description="Priority 1 (highest) to 10 (lowest). Default 5.",
+    )
+    status: Optional[Literal["open", "in_progress", "done", "cancelled"]] = Field(
+        default=None,
+        description="Task status (for updates).",
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Project this task belongs to (for new tasks).",
+    )
+
+
+class WriteTaskResult(BaseModel):
+    task_id: str = Field(description="ID of the created or updated task.")
+    action: Literal["created", "updated"] = Field(
+        description="Whether the task was created or updated.",
     )
 
 
@@ -62,6 +119,9 @@ def make_write_task_tool(db_path: str) -> Tool:
 
     def execute(params: dict) -> dict:
         now = datetime.now(timezone.utc).isoformat()
+        # exclude_unset=True in model_dump means absent optional fields are
+        # not in the dict, so "if field in params" correctly detects whether
+        # the caller explicitly supplied a value for that field.
         task_id = params.get("task_id")
 
         with get_conn(db_path) as conn:
@@ -85,7 +145,7 @@ def make_write_task_tool(db_path: str) -> Tool:
                     f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?",
                     values,
                 )
-                return {"task_id": task_id, "action": "updated"}
+                return WriteTaskResult(task_id=task_id, action="updated").model_dump()
             else:
                 # Create new task.
                 new_id = task_id or ("task_" + uuid.uuid4().hex[:12])
@@ -107,7 +167,7 @@ def make_write_task_tool(db_path: str) -> Tool:
                         now,
                     ),
                 )
-                return {"task_id": new_id, "action": "created"}
+                return WriteTaskResult(task_id=new_id, action="created").model_dump()
 
     return Tool(
         name="write_task",
@@ -116,46 +176,9 @@ def make_write_task_tool(db_path: str) -> Tool:
             "Omit task_id to create a new task. "
             "Provide task_id to update an existing task's title, description, status, or priority."
         ),
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "ID of an existing task to update. Omit to create new.",
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Task title (required for new tasks).",
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Detailed task description.",
-                },
-                "source": {
-                    "type": "string",
-                    "enum": ["user", "agent", "reflection"],
-                    "description": "Who created the task.",
-                },
-                "priority": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 10,
-                    "description": "Priority 1 (highest) to 10 (lowest). Default 5.",
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["open", "in_progress", "done", "cancelled"],
-                    "description": "Task status (for updates).",
-                },
-                "project_id": {
-                    "type": "string",
-                    "description": "Project this task belongs to (for new tasks).",
-                },
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
+        parameters_schema=model_to_json_schema(WriteTaskParams),
         risk_level="low",
         allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
+        params_model=WriteTaskParams,
     )

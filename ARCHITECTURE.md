@@ -16,7 +16,7 @@ This is the first file any agent reads before modifying the codebase.
 
 ## Current Status
 
-**Phase 2 — COMPLETE**
+**Phase 2 — COMPLETE. Pydantic contracts layer added.**
 
 Three-tier context management is live. Every event is now assigned to a project
 (defaulting to the `"default"` project from `config.yaml`). After each invocation
@@ -24,7 +24,12 @@ Three-tier context management is live. Every event is now assigned to a project
 `maybe_summarise()` if the buffer is over budget. The next invocation receives
 `[BRIEF] / [SUMMARY] / [RECENT HISTORY]` injected as a user message before the
 task description. RAG / vector retrieval is deferred to a later phase.
-All 47 unit and integration tests pass.
+
+All tool implementations now define Pydantic params and result models.
+`tools/registry.py` validates through the Pydantic model when `params_model` is
+set, falling back to jsonschema for any future unmigrated tool.
+`core/event_queue.py` exports `EventEnvelope` for adapter-boundary validation.
+91 unit and integration tests pass.
 
 ---
 
@@ -74,6 +79,11 @@ hash-based ID for deduplication. `dequeue_next_event()` uses a two-step
 read-then-write so the approval gate has a cancellation window between
 status transitions. `reset_stale_events()` recovers from crashes at startup.
 
+Also exports `EventEnvelope`, a Pydantic model for the event fields (source,
+type, payload, project_id, priority). Adapters construct this model before
+calling `push_event` so malformed events are rejected at the producer boundary
+rather than reaching the queue or router with invalid data.
+
 ### `core/router.py`
 Rules-based dispatcher. Given an event, returns agent type, model key, and
 task description. Template expansion supports `{payload[key]}` references only
@@ -96,28 +106,49 @@ Each tick includes the current minute in the payload for distinct event IDs.
 
 ### `tools/registry.py` [SAFETY-CRITICAL]
 Defines the `Tool` dataclass and `ToolRegistry`. Every tool call goes through
-`Tool.execute()`, which validates parameters against the JSON Schema before
-dispatching to the implementation. This is the sole validation checkpoint.
+`Tool.execute()`, which validates parameters before dispatching to the
+implementation. This is the sole validation checkpoint.
+
+`params_model` (a Pydantic `BaseModel` subclass) is a required field on every
+`Tool`. Validation always runs through Pydantic; there is no jsonschema fallback.
+
+`model_to_json_schema(model)` is a module-level helper that wraps
+`model.model_json_schema()`. All tools call it to populate `parameters_schema`,
+keeping the agent-prompt schema and the runtime validation schema derived from
+a single source of truth.
 
 ### `tools/filesystem.py` [SAFETY-CRITICAL]
 Implements `read_file`, `write_file`, and `list_directory`. Path allowlist
 enforcement via `_is_allowed()` uses `.resolve()` and `.relative_to()` to
-defeat directory traversal attacks.
+defeat directory traversal attacks. Each tool defines Pydantic params and
+result models (`ReadFileParams`/`ReadFileResult`, etc.).
 
 ### `tools/shell.py` [SAFETY-CRITICAL]
 Implements `shell_run` (allowlisted commands, `shell=False`) and `run_tests`
 (fixed pytest command). The allowlist check and `shell=False` are the two
-enforcement points for preventing arbitrary command injection.
+enforcement points for preventing arbitrary command injection. Both tools
+define Pydantic params and result models.
+
+`ShellRunParams.command` accepts `Union[list[str], str]` matching the original
+`oneOf` schema; the execute function normalises a string to a list before the
+allowlist check. Pydantic does not coerce between the two union branches; the
+type is preserved as-is and the execute function handles both cases.
 
 ### `tools/git.py`
 Implements `git_status`, `git_commit`, `git_branch`, `git_rollback`. All use
-`subprocess.run(..., shell=False)` with fixed argv arrays.
+`subprocess.run(..., shell=False)` with fixed argv arrays. Each tool defines
+Pydantic params and result models.
 
 ### `tools/tasks.py`
-Implements `read_task_list` and `write_task` over the `tasks` DB table.
+Implements `read_task_list` and `write_task` over the `tasks` DB table. Both
+tools define Pydantic params and result models. `WriteTaskParams` uses all-
+optional fields (all `default=None`); the registry calls
+`model_dump(exclude_unset=True)` so the execute function's `if field in params`
+pattern correctly detects which fields the caller actually supplied.
 
 ### `tools/notify.py`
 Implements `notify_user`. Phase 1 transport is stderr. Interface is stable.
+Defines `NotifyUserParams` and `NotifyUserResult`.
 
 ### `storage/schema.sql`
 All table definitions. Safe to re-run (uses `IF NOT EXISTS`). Tables:
@@ -147,6 +178,13 @@ Unit tests: parameter validation, unknown tool error, schema_for_agent format.
 Unit tests: ensure_project idempotency, assemble_context empty/brief/summary/history
 paths, token-budget truncation, append_to_history role preservation, maybe_summarise
 skip-when-within-budget and trigger-with-update paths (LiteLLM mocked).
+
+### `tests/test_pydantic_contracts.py`
+Contract tests for the Pydantic validation layer: valid params pass through
+cleanly, invalid params return a structured error dict (never raise), result
+models produce the expected shape, `model_to_json_schema` output matches the
+tool's `parameters_schema`, `EventEnvelope` rejects malformed adapter events.
+Also verifies the jsonschema fallback path still works for unmigrated tools.
 
 ### `tests/integration/test_end_to_end.py`
 Integration test: real tool execution (read_file + notify_user), LiteLLM
@@ -337,3 +375,39 @@ cannot be expanded without a human editing the code and restarting.
   implementation is always a human step.
 - The complete capability surface of the running system is auditable by reading
   the startup code.
+
+---
+
+### DECISION — Pydantic for parameter and result validation; not PydanticAI
+Date: 2026-02-22
+Status: active
+
+**Decision:** Adopt Pydantic (v2) as the validation library for tool parameter
+and result contracts. Do not adopt PydanticAI.
+
+**Reasoning:** The orchestrator already has its own agent invocation loop,
+tool registry, approval gate, and structured tool-call protocol. PydanticAI is
+an agent framework — it provides its own model-calling interface, tool
+registration pattern, and execution loop. Adopting it would mean replacing the
+orchestrator's core components with PydanticAI abstractions, eliminating the
+explicit control points (approval gate, risk classification, structured
+`<tool_call>` parsing) that the system depends on for safety. That is not a
+validation upgrade; it is an architectural replacement.
+
+Pydantic the library provides exactly what is needed: a schema-first way to
+define, validate, and document parameter and result shapes with Python type
+annotations. It also generates JSON Schema via `model_json_schema()`, which
+means the schema injected into agent prompts and the schema used for runtime
+validation are derived from a single source and can never drift apart.
+
+**Consequences:**
+- `params_model` is a required field on `Tool`. All tools must define a Pydantic
+  params model; the jsonschema fallback has been removed.
+- `parameters_schema` on every migrated tool is generated by
+  `model_to_json_schema(ParamsModel)`, not written by hand. Adding Pydantic
+  models keeps schemas current automatically.
+- `EventEnvelope` in `event_queue.py` lets adapters catch malformed events at
+  the producer boundary before they reach the queue.
+- `pydantic>=2.0.0` is added to `requirements.txt`. The Pydantic v2 API
+  (`model_validate`, `model_dump`, `model_json_schema`, `ConfigDict`) is used
+  throughout; v1 compatibility shims are not used.
