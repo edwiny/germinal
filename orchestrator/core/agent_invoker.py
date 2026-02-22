@@ -34,11 +34,22 @@ logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 # [INVARIANT] Iteration cap prevents runaway loops. An agent that needs more
 # than DEFAULT_MAX_ITERATIONS for a sensible task is almost certainly stuck.
 # Raise only after confirming the model is reasoning correctly on the task.
-DEFAULT_MAX_ITERATIONS = 10
+DEFAULT_MAX_ITERATIONS = 100
 
-# Regex for extracting <tool_call>...</tool_call> blocks.
+# Regex for strict parsing: requires a closing </tool_call> tag.
 # re.DOTALL so the JSON body can span multiple lines.
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+
+# Regex for lenient parsing: matches an opening <tool_call> tag with no
+# closing tag. Used as a fallback when models omit the closing tag on the
+# last line of their response. raw_decode extracts valid JSON from whatever
+# follows; if the JSON is also incomplete the parse will fail and we treat
+# that as genuine truncation.
+_TOOL_CALL_OPEN_RE = re.compile(r"<tool_call>\s*(\{.*)", re.DOTALL)
+
+# finish_reason values that indicate the model was cut off by a token limit.
+# "length" is the standard value; "max_tokens" is used by some providers.
+_TRUNCATED_FINISH_REASONS = {"length", "max_tokens"}
 
 
 # ---------------------------------------------------------------------------
@@ -109,12 +120,45 @@ async def invoke(
 
         raw = await litellm.acompletion(model=model, messages=messages, api_key=api_key)
         assistant_text: str = raw.choices[0].message.content or ""
+        finish_reason: str = raw.choices[0].finish_reason or ""
         _log_incoming(assistant_text, iteration)
         messages.append({"role": "assistant", "content": assistant_text})
 
         call_request = _parse_tool_call(assistant_text)
         if call_request is None:
-            # The agent is done when it stops emitting tool calls. That's it. 
+            # Distinguish between three failure modes before declaring done:
+            #
+            # 1. Token-limit truncation (authoritative signal from the API).
+            #    The model was cut off regardless of what's in the text.
+            if finish_reason in _TRUNCATED_FINISH_REASONS:
+                logger.warning(
+                    "iter=%d LLM response truncated by token limit (finish_reason=%r). "
+                    "Partial response (first 500 chars): %.500s",
+                    iteration + 1, finish_reason, assistant_text,
+                )
+                final_response = (
+                    f"Response truncated by model token limit "
+                    f"(finish_reason={finish_reason!r}). The in-flight tool call was lost."
+                )
+                status = "failed"
+                break
+
+            # 2. Incomplete tool call: <tool_call> tag present but JSON could
+            #    not be parsed even with lenient (no-closing-tag) mode. This
+            #    means the JSON body itself was cut off mid-stream.
+            if "<tool_call>" in assistant_text:
+                logger.warning(
+                    "iter=%d LLM response contained an unparseable tool call "
+                    "(finish_reason=%r). Partial response (first 500 chars): %.500s",
+                    iteration + 1, finish_reason, assistant_text,
+                )
+                final_response = (
+                    "Tool call could not be parsed — JSON was incomplete or malformed."
+                )
+                status = "failed"
+                break
+
+            # 3. No tool call at all — the agent is done.
             # The orchestrator has no independent view of whether the work is actually complete — it just trusts that if the model
             # produced a response with no <tool_call> block, the job is finished.
             # TODO: improve task completion evaluation criteria
@@ -186,14 +230,45 @@ async def invoke(
 
 
 def _parse_tool_call(text: str) -> dict | None:
-    """Return the first <tool_call> JSON object found in text, or None."""
+    """
+    Return the first <tool_call> JSON object found in text, or None.
+
+    Two-pass strategy:
+    1. Strict: requires a closing </tool_call> tag.
+    2. Lenient: accepts an unclosed opening tag — some models omit the closing
+       tag when the tool call is the last content in their response. raw_decode
+       extracts the first valid JSON object and ignores anything after it
+       (e.g. a stray extra brace). If the JSON itself is incomplete the decode
+       fails and None is returned, which the caller treats as genuine truncation.
+    """
     match = _TOOL_CALL_RE.search(text)
+    lenient = False
     if not match:
-        return None
+        match = _TOOL_CALL_OPEN_RE.search(text)
+        if not match:
+            return None
+        lenient = True
+
+    raw_json = match.group(1).strip()
     try:
-        return json.loads(match.group(1))
-    except json.JSONDecodeError:
+        obj, end = json.JSONDecoder().raw_decode(raw_json)
+    except json.JSONDecodeError as exc:
+        logger.warning("_parse_tool_call: JSON parse error — %s — in: %r", exc, raw_json[:200])
         return None
+
+    if not isinstance(obj, dict):
+        return None
+
+    if lenient:
+        logger.debug("_parse_tool_call: parsed tool call from unclosed <tool_call> block")
+    else:
+        trailing = raw_json[end:].strip()
+        if trailing:
+            logger.warning(
+                "_parse_tool_call: trailing garbage after JSON (%d chars): %r",
+                len(trailing), trailing,
+            )
+    return obj
 
 
 def _run_tool(

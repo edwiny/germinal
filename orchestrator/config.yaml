@@ -71,7 +71,7 @@ agents:
       - "lint"
       - "check_syntax"
       - "notify_user"
-    max_iterations: 10
+    max_iterations: 100
     approval_required_for: ["high"]
   dev_agent:
     allowed_tools:
@@ -90,7 +90,7 @@ agents:
       - "lint"
       - "check_syntax"
       - "notify_user"
-    max_iterations: 10
+    max_iterations: 100
     approval_required_for: ["high"]
 
 approval:
@@ -99,7 +99,7 @@ approval:
 
 logging:
   # DEBUG emits full prompt dumps; INFO is the recommended production level.
-  level: INFO
+  level: DEBUG
 
 context:
   # when the combined context history exceeds these many tokens (currently 1 token == 4 characters) then invoke
