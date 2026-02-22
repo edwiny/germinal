@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Callable
@@ -118,9 +119,35 @@ async def invoke(
         # uncomment here if you want the full prompt printed
         # logger.debug("→ LLM FULL PROMPT iter=%d\n%s", iteration + 1, json.dumps(messages, indent=2))
 
-        raw = await litellm.acompletion(model=model, messages=messages, api_key=api_key)
+        logger.info(
+            "→ LLM  agent=%s  model=%s  iter=%d/%d  msgs=%d",
+            agent_type, model, iteration + 1, max_iterations, len(messages),
+        )
+        _t0 = time.monotonic()
+        try:
+            raw = await litellm.acompletion(model=model, messages=messages, api_key=api_key)
+        except Exception as exc:
+            _elapsed = time.monotonic() - _t0
+            status_code = getattr(exc, "status_code", None)
+            logger.error(
+                "LLM call failed  agent=%s  model=%s  iter=%d  elapsed=%.1fs"
+                "  status_code=%s  error=%s",
+                agent_type, model, iteration + 1, _elapsed, status_code, exc,
+                exc_info=True,
+            )
+            final_response = f"LLM call failed (status_code={status_code}): {exc}"
+            status = "failed"
+            break
+        _elapsed = time.monotonic() - _t0
         assistant_text: str = raw.choices[0].message.content or ""
+<<<<<<< Updated upstream
         finish_reason: str = raw.choices[0].finish_reason or ""
+=======
+        logger.info(
+            "← LLM  agent=%s  iter=%d  chars=%d  elapsed=%.1fs",
+            agent_type, iteration + 1, len(assistant_text), _elapsed,
+        )
+>>>>>>> Stashed changes
         _log_incoming(assistant_text, iteration)
         messages.append({"role": "assistant", "content": assistant_text})
 
