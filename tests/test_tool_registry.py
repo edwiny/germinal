@@ -5,7 +5,7 @@
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from tools.registry import Tool, ToolRegistry, model_to_json_schema
+from orchestrator.tools.registry import Tool, ToolRegistry, model_to_json_schema
 
 
 class _EchoParams(BaseModel):

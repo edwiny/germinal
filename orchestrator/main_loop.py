@@ -19,29 +19,31 @@ import logging
 import os
 import signal
 import sys
+from pathlib import Path
 
 import yaml
 
-from adapters.network import NetworkAdapter
-from agents import task_agent as task_agent_mod
-from core.agent_invoker import invoke
-from core.approval_gate import request_approval
-from core.context_manager import ensure_project
-from core.event_queue import (
+from .adapters import timer as timer_adapter
+from .adapters.network import NetworkAdapter
+from .agents import task_agent as task_agent_mod
+from .core.agent_invoker import invoke
+from .core.approval_gate import request_approval
+from .core.context_manager import ensure_project
+from .core.event_queue import (
     complete_event,
     dequeue_next_event,
     fail_event,
     reset_stale_events,
 )
-from core.router import UnroutableEvent, route_event
-from storage.db import init_db
-from tools.filesystem import (
+from .core.router import UnroutableEvent, route_event
+from .storage.db import init_db
+from .tools.filesystem import (
     make_list_directory_tool,
     make_read_file_tool,
     make_write_file_tool,
 )
-from tools.code_quality import make_check_syntax_tool, make_lint_tool
-from tools.git import (
+from .tools.code_quality import make_check_syntax_tool, make_lint_tool
+from .tools.git import (
     make_git_add_tool,
     make_git_branch_tool,
     make_git_commit_tool,
@@ -51,9 +53,9 @@ from tools.git import (
     make_git_rollback_tool,
     make_git_status_tool,
 )
-from tools.notify import make_notify_user_tool
-from tools.registry import ToolRegistry
-from tools.shell import make_run_tests_tool, make_shell_run_tool
+from .tools.notify import make_notify_user_tool
+from .tools.registry import ToolRegistry
+from .tools.shell import make_run_tests_tool, make_shell_run_tool
 
 # Poll interval when the event queue is empty. 500ms balances responsiveness
 # against unnecessary CPU spin. Do not set below ~100ms on SQLite.
@@ -71,8 +73,18 @@ def setup_logging(level: str) -> None:
     logging.basicConfig(level=level.upper(), handlers=[handler])
 
 
-def load_config(path: str = "config.yaml") -> dict:
-    with open(path) as f:
+_DEFAULT_CONFIG = Path.home() / ".config" / "germinal" / "config.yaml"
+
+
+def load_config(path: str | None = None) -> dict:
+    # Resolve config path: explicit arg > ~/.config/germinal/config.yaml > local fallback.
+    # The local fallback exists so 'python -m orchestrator' works from the repo
+    # root during development without requiring a prior 'germ' run to seed the
+    # user config.
+    resolved = Path(path) if path else _DEFAULT_CONFIG
+    if not resolved.exists():
+        resolved = Path("config.yaml")
+    with open(resolved) as f:
         return yaml.safe_load(f)
 
 

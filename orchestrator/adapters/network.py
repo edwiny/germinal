@@ -39,7 +39,7 @@ from typing import Any
 
 from aiohttp import web
 
-from core.event_queue import push_event
+from ..core.event_queue import push_event
 
 logger = logging.getLogger("network")
 

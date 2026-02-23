@@ -4,14 +4,14 @@
 
 import pytest
 
-from core.event_queue import (
+from orchestrator.core.event_queue import (
     complete_event,
     dequeue_next_event,
     fail_event,
     push_event,
     reset_stale_events,
 )
-from storage.db import get_conn, init_db
+from orchestrator.storage.db import get_conn, init_db
 
 
 @pytest.fixture()

@@ -11,7 +11,7 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tools.registry import Tool, model_to_json_schema
+from .registry import Tool, model_to_json_schema
 
 # Timeout for shell_run commands in seconds. Long-running commands should
 # use a dedicated tool rather than increasing this limit.

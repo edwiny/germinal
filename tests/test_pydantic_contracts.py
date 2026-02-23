@@ -9,8 +9,8 @@
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from core.event_queue import EventEnvelope
-from tools.filesystem import (
+from orchestrator.core.event_queue import EventEnvelope
+from orchestrator.tools.filesystem import (
     ReadFileParams,
     ReadFileResult,
     WriteFileParams,
@@ -18,10 +18,9 @@ from tools.filesystem import (
     ListDirectoryParams,
     ListDirectoryResult,
 )
-from tools.code_quality import CheckSyntaxParams, LintParams
-from tools.git import (
+from orchestrator.tools.code_quality import CheckSyntaxParams, LintParams
+from orchestrator.tools.git import (
     GitAddParams,
-    GitBranchParams,
     GitCommitParams,
     GitCommitResult,
     GitDiffParams,
@@ -30,9 +29,9 @@ from tools.git import (
     GitRollbackParams,
     GitStatusParams,
 )
-from tools.notify import NotifyUserParams, NotifyUserResult
-from tools.registry import Tool, ToolRegistry, model_to_json_schema
-from tools.shell import RunTestsParams, RunTestsResult, ShellRunParams
+from orchestrator.tools.notify import NotifyUserParams, NotifyUserResult
+from orchestrator.tools.registry import Tool, ToolRegistry, model_to_json_schema
+from orchestrator.tools.shell import RunTestsParams, RunTestsResult, ShellRunParams
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +163,6 @@ def test_write_file_result_shape():
 
 
 def test_git_commit_result_shape():
-    from tools.git import GitCommitResult
     result = GitCommitResult(stdout="ok", stderr="", returncode=0, success=True)
     d = result.model_dump()
     assert "success" in d

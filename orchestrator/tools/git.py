@@ -11,7 +11,7 @@ import subprocess
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tools.registry import Tool, model_to_json_schema
+from .registry import Tool, model_to_json_schema
 
 _GIT_TIMEOUT = 60  # seconds; git operations on a local repo should never take longer
 

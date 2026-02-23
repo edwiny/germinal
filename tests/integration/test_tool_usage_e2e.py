@@ -17,11 +17,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.agent_invoker import invoke
-from storage.db import get_conn, init_db
-from tools.filesystem import make_read_file_tool, make_write_file_tool
-from tools.notify import make_notify_user_tool
-from tools.registry import Tool, ToolRegistry, model_to_json_schema
+from orchestrator.core.agent_invoker import invoke
+from orchestrator.storage.db import get_conn, init_db
+from orchestrator.tools.filesystem import make_read_file_tool, make_write_file_tool
+from orchestrator.tools.notify import make_notify_user_tool
+from orchestrator.tools.registry import Tool, ToolRegistry, model_to_json_schema
 
 
 class _DangerousOpParams(BaseModel):
@@ -78,7 +78,7 @@ def _tool_call_block(tool: str, parameters: dict) -> str:
 async def _run(task: str, responses: list, reg: ToolRegistry, db: str, approval_gate=None) -> dict:
     """Thin wrapper around invoke() with LiteLLM mocked."""
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=responses),
     ):
         return await invoke(
@@ -444,7 +444,7 @@ async def test_iteration_cap_sets_failed_status(registry, tmp_db, tmp_dir):
     ]
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=responses),
     ):
         result = await invoke(

@@ -4,7 +4,17 @@
 
 import pytest
 
-from core.router import UnroutableEvent, route_event
+from orchestrator.core.router import UnroutableEvent, route_event
+from orchestrator.storage.db import init_db
+
+
+# Config must include paths.db because the timer tick rule creates a
+# preflight closure that captures config["paths"]["db"].
+@pytest.fixture()
+def tmp_db(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    init_db(db_path)
+    return db_path
 
 
 @pytest.fixture()

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tools.code_quality import make_check_syntax_tool, make_lint_tool
+from orchestrator.tools.code_quality import make_check_syntax_tool, make_lint_tool
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ def _mock_proc(returncode: int, stdout: str = "", stderr: str = "") -> MagicMock
 def test_lint_clean_file_passes(valid_py_file):
     """lint returns passed=True when ruff reports no issues."""
     tool = make_lint_tool()
-    with patch("tools.code_quality.subprocess.run", return_value=_mock_proc(0)) as mock_run:
+    with patch("orchestrator.tools.code_quality.subprocess.run", return_value=_mock_proc(0)) as mock_run:
         result = tool.execute({"path": valid_py_file})
     assert isinstance(result, dict)
     assert result.get("passed") is True
@@ -105,7 +105,7 @@ def test_lint_clean_file_passes(valid_py_file):
 def test_lint_issues_found_fails(valid_py_file):
     """lint returns passed=False when ruff reports issues (non-zero exit)."""
     tool = make_lint_tool()
-    with patch("tools.code_quality.subprocess.run", return_value=_mock_proc(1, stdout="E501 line too long")):
+    with patch("orchestrator.tools.code_quality.subprocess.run", return_value=_mock_proc(1, stdout="E501 line too long")):
         result = tool.execute({"path": valid_py_file})
     assert result.get("passed") is False
     assert result.get("tool_used") == "ruff"
@@ -120,7 +120,7 @@ def test_lint_falls_back_to_flake8_when_ruff_missing(valid_py_file):
             raise FileNotFoundError
         return _mock_proc(0)
 
-    with patch("tools.code_quality.subprocess.run", side_effect=side_effect):
+    with patch("orchestrator.tools.code_quality.subprocess.run", side_effect=side_effect):
         result = tool.execute({"path": valid_py_file})
     assert result.get("passed") is True
     assert result.get("tool_used") == "flake8"
@@ -129,7 +129,7 @@ def test_lint_falls_back_to_flake8_when_ruff_missing(valid_py_file):
 def test_lint_error_dict_when_no_linter_available(valid_py_file):
     """lint returns an error dict (not a raised exception) when neither linter is found."""
     tool = make_lint_tool()
-    with patch("tools.code_quality.subprocess.run", side_effect=FileNotFoundError):
+    with patch("orchestrator.tools.code_quality.subprocess.run", side_effect=FileNotFoundError):
         result = tool.execute({"path": valid_py_file})
     assert isinstance(result, dict)
     assert "error" in result
@@ -138,7 +138,7 @@ def test_lint_error_dict_when_no_linter_available(valid_py_file):
 def test_lint_nonexistent_path_returns_dict():
     """lint with a non-existent path returns a dict — either an error or a linter report."""
     tool = make_lint_tool()
-    with patch("tools.code_quality.subprocess.run", return_value=_mock_proc(1, stderr="No such file")):
+    with patch("orchestrator.tools.code_quality.subprocess.run", return_value=_mock_proc(1, stderr="No such file")):
         result = tool.execute({"path": "/nonexistent/path"})
     assert isinstance(result, dict)
 
@@ -146,7 +146,7 @@ def test_lint_nonexistent_path_returns_dict():
 def test_lint_result_is_dict_not_exception(valid_py_file):
     """lint never raises — always returns a dict."""
     tool = make_lint_tool()
-    with patch("tools.code_quality.subprocess.run", return_value=_mock_proc(0)):
+    with patch("orchestrator.tools.code_quality.subprocess.run", return_value=_mock_proc(0)):
         try:
             result = tool.execute({"path": valid_py_file})
             assert isinstance(result, dict)
@@ -157,7 +157,7 @@ def test_lint_result_is_dict_not_exception(valid_py_file):
 def test_lint_fix_flag_passed_to_ruff(valid_py_file):
     """When fix=True, --fix is appended to the ruff command."""
     tool = make_lint_tool()
-    with patch("tools.code_quality.subprocess.run", return_value=_mock_proc(0)) as mock_run:
+    with patch("orchestrator.tools.code_quality.subprocess.run", return_value=_mock_proc(0)) as mock_run:
         tool.execute({"path": valid_py_file, "fix": True})
     args = mock_run.call_args[0][0]
     assert "--fix" in args

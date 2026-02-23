@@ -10,7 +10,7 @@ import sys
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tools.registry import Tool, model_to_json_schema
+from .registry import Tool, model_to_json_schema
 
 _LINT_TIMEOUT = 60   # seconds; linting a large codebase should not exceed this
 _SYNTAX_TIMEOUT = 30  # seconds; py_compile on a single file is always fast

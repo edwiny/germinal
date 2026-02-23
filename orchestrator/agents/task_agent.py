@@ -7,7 +7,7 @@
 # tool surface so that most of its actions are low-risk and do not
 # require approval.
 
-from tools.registry import ToolRegistry
+from ..tools.registry import ToolRegistry
 
 AGENT_TYPE = "task_agent"
 

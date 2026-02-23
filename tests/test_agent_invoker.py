@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.agent_invoker import invoke, _parse_tool_call
-from storage.db import get_conn, init_db
-from tools.registry import Tool, ToolRegistry, model_to_json_schema
+from orchestrator.core.agent_invoker import _MAX_CONTINUATIONS, _parse_tool_call, invoke
+from orchestrator.storage.db import get_conn, init_db
+from orchestrator.tools.registry import Tool, ToolRegistry, model_to_json_schema
 
 
 class _EchoParams(BaseModel):
@@ -68,7 +68,7 @@ def _mock_response(content: str, finish_reason: str = "stop") -> MagicMock:
 async def test_invocation_row_written_on_completion(tmp_db, registry):
     """A completed invocation must appear in the DB with status 'done'."""
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(return_value=_mock_response("All done, no tools needed.")),
     ):
         result = await invoke(
@@ -100,7 +100,7 @@ async def test_tool_call_executed_and_logged(tmp_db, registry):
     done_response = _mock_response("Done. The echo returned 'hello'.")
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=[tool_response, done_response]),
     ):
         result = await invoke(
@@ -140,7 +140,7 @@ async def test_unknown_tool_returns_error_and_continues(tmp_db, registry):
     done_response = _mock_response("Acknowledged the error. Task complete.")
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=[bad_tool_response, done_response]),
     ):
         result = await invoke(
@@ -163,7 +163,7 @@ async def test_iteration_cap_sets_failed_status(tmp_db, registry):
     )
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(return_value=looping_response),
     ):
         result = await invoke(
@@ -245,7 +245,7 @@ async def test_trailing_brace_tool_call_executes(tmp_db, registry):
     done = _mock_response("Done.")
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=[malformed, done]),
     ):
         result = await invoke(
@@ -295,7 +295,7 @@ async def test_finish_reason_length_sets_failed_status(tmp_db, registry):
     )
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(return_value=truncated),
     ):
         result = await invoke(
@@ -325,7 +325,7 @@ async def test_incomplete_json_in_tool_call_sets_failed_status(tmp_db, registry)
     )
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(return_value=truncated),
     ):
         result = await invoke(
@@ -354,7 +354,7 @@ async def test_unclosed_tag_with_valid_json_executes_tool(tmp_db, registry):
     done = _mock_response("Done.")
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=[no_closing_tag, done]),
     ):
         result = await invoke(
@@ -377,7 +377,7 @@ async def test_truncation_written_to_db(tmp_db, registry):
     )
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(return_value=truncated),
     ):
         result = await invoke(
@@ -417,7 +417,7 @@ async def test_continuation_assembles_split_tool_call(tmp_db, registry):
     done = _mock_response("Done. The echo returned 'hello'.")
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=[chunk1, chunk2, done]),
     ):
         result = await invoke(
@@ -440,7 +440,7 @@ async def test_continuation_assembles_split_final_response(tmp_db, registry):
     chunk2 = _mock_response("the final answer.", finish_reason="stop")
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=[chunk1, chunk2]),
     ):
         result = await invoke(
@@ -457,12 +457,10 @@ async def test_continuation_assembles_split_final_response(tmp_db, registry):
 
 async def test_continuation_cap_exhausted_sets_failed(tmp_db, registry):
     """If every chunk is truncated the invoker must fail after the cap is reached."""
-    from core.agent_invoker import _MAX_CONTINUATIONS
-
     truncated = _mock_response('<tool_call>\n{"tool": "echo"', finish_reason="length")
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(return_value=truncated),
     ) as mock_llm:
         result = await invoke(
