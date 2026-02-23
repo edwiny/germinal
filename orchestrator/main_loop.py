@@ -121,7 +121,7 @@ def build_full_registry(config: dict, db_path: str) -> ToolRegistry:
     return registry
 
 
-def _select_model(config: dict, model_key: str) -> tuple[str, str | None, int | None]:
+def select_model(config: dict, model_key: str) -> tuple[str, str | None, int | None]:
     """
     Resolve model_key → (litellm model string, api_key | None, max_tokens | None).
 
@@ -160,7 +160,7 @@ def _select_model(config: dict, model_key: str) -> tuple[str, str | None, int | 
     return entry["model"], api_key, max_tokens
 
 
-def _make_approval_gate(db_path: str):
+def make_approval_gate(db_path: str):
     """
     Return a closure that matches the approval_gate callable signature
     expected by core/agent_invoker.py.
@@ -189,7 +189,7 @@ def _make_approval_gate(db_path: str):
     return gate
 
 
-def _agent_registry(agent_type: str, full_registry: ToolRegistry, config: dict) -> ToolRegistry:
+def agent_registry_for(agent_type: str, full_registry: ToolRegistry, config: dict) -> ToolRegistry:
     """
     Return a ToolRegistry scoped to the tools allowed for agent_type.
 
@@ -262,8 +262,8 @@ async def _event_loop(
         # use {payload[agent_type]} in its task_template and set agent_type
         # from the payload; until that rule exists, fall back to routing result.
         agent_type = routing["agent_type"]
-        model, api_key, max_tokens = _select_model(config, routing["model_key"])
-        agent_reg = _agent_registry(agent_type, full_registry, config)
+        model, api_key, max_tokens = select_model(config, routing["model_key"])
+        agent_reg = agent_registry_for(agent_type, full_registry, config)
         max_iter = config.get("agents", {}).get(agent_type, {}).get("max_iterations", 10)
 
         try:
@@ -320,7 +320,7 @@ async def main() -> None:
         logger_main.info("Reset %d stale event(s) to 'pending'.", stale)
 
     full_registry = build_full_registry(config, db_path)
-    approval_gate = _make_approval_gate(db_path)
+    approval_gate = make_approval_gate(db_path)
 
     # Shared dict: event_id → asyncio.Future. The network adapter writes futures
     # here; the event loop resolves them after invoke() completes.

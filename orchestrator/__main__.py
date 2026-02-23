@@ -1,8 +1,10 @@
+import argparse
 import asyncio
 from importlib.resources import files
 from pathlib import Path
 
 from .main_loop import main as _async_main
+from .main_interactive import run_interactive
 
 _CONFIG_PATH = Path.home() / ".config" / "germinal" / "config.yaml"
 
@@ -26,7 +28,24 @@ def _init_config() -> None:
 
 def main() -> None:
     _init_config()
-    asyncio.run(_async_main())
+    parser = argparse.ArgumentParser(prog="germ", description="Germinal agent")
+    parser.add_argument(
+        "--daemon",
+        action="store_true",
+        help="Run as daemon (network adapter + event loop)",
+    )
+    parser.add_argument(
+        "prompt",
+        nargs="?",
+        default=None,
+        help="One-shot prompt; if omitted, enter interactive REPL",
+    )
+    args = parser.parse_args()
+
+    if args.daemon:
+        asyncio.run(_async_main())
+    else:
+        asyncio.run(run_interactive(prompt=args.prompt))
 
 
 if __name__ == "__main__":
