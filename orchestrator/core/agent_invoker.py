@@ -84,7 +84,11 @@ class ToolCallRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     reasoning: str = Field(
-        description="The agent's explanation of what it is doing or has concluded."
+        description=(
+            "Your reply to the user. When emitting a tool_call, briefly explain "
+            "what you are about to do. When tool_call is null, this is your final "
+            "answer — write it as if speaking directly to the user, not as internal notes."
+        )
     )
     tool_call: Optional[ToolCallRequest] = Field(
         None,

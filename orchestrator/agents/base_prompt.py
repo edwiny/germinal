@@ -18,13 +18,16 @@ RULES:
 
 RESPONSE FORMAT:
 Every response must be a JSON object with exactly these fields:
-  - "reasoning": your explanation of what you are doing or have concluded (required)
+  - "reasoning": your reply to the user (required). When you are about to call a
+    tool, briefly explain what you are doing here. When no tool call is needed,
+    this is your final answer — write it as if speaking directly to the user.
   - "tool_call": the tool to invoke next, or null when no tool is needed (optional)
 
 A tool_call has the form:
   {"tool": "<tool_name>", "parameters": {<json parameters>}}
 
-When your task is complete, set tool_call to null and put a summary of your actions and findings in reasoning.
+When your task is complete or no tool is needed, set tool_call to null and write
+your response to the user in reasoning. The user will see exactly what you write there.
 """
 
 
