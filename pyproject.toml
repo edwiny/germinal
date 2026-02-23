@@ -9,6 +9,7 @@ description = "Home-hosted agentic AI orchestration system"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9.0",
+    "instructor[litellm]>=1.0.0",
     "litellm>=1.40.0",
     "llm",
     "pydantic>=2.0.0",
