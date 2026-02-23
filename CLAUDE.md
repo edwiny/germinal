@@ -67,10 +67,7 @@ orchestrator/
 ├── tools/
 │   ├── registry.py          # Tool registry: schema + dispatch
 │   ├── filesystem.py        # Read/write files within allowed paths
-│   ├── shell.py             # Allowlisted shell command execution
-│   ├── git.py               # git status, diff, commit, branch, rollback
-│   ├── model.py             # Calls Ollama or hosted API via LiteLLM
-│   └── notify.py            # Sends notifications to the user
+│   └── <other tools>
 │
 ├── adapters/
 │   ├── timer.py             # Cron-like timer events
@@ -79,8 +76,7 @@ orchestrator/
 │
 ├── storage/
 │   ├── schema.sql           # All table definitions
-│   ├── db.py                # SQLite connection pool and helpers
-│   └── vector.py            # Embedding storage and retrieval (Phase 2)
+│   └── db.py                # SQLite connection pool and helpers
 │
 ├── agents/
 │   ├── base_prompt.py       # Shared system prompt construction
@@ -89,11 +85,12 @@ orchestrator/
 │
 ├── tests/
 │   ├── test_event_queue.py
-│   ├── test_router.py
-│   ├── test_tool_registry.py
-│   ├── test_agent_invoker.py
+│   ├── <other unit tests>
 │   └── integration/
-│       └── test_end_to_end.py
+│       └── <end to end tests>
+│
+├── cli/
+│   └── <cli tools>
 │
 └── scripts/
     ├── setup.sh             # Install dependencies, initialise DB
@@ -106,156 +103,35 @@ orchestrator/
 
 ```sql
 -- Events arriving from any source
-CREATE TABLE events (
-    id          TEXT PRIMARY KEY,  -- deterministic hash of source+content
-    source      TEXT NOT NULL,     -- 'timer', 'email', 'user', etc.
-    type        TEXT NOT NULL,     -- 'message', 'tick', 'approval_response', etc.
-    project_id  TEXT,              -- NULL means unclassified / inbox
-    priority    INTEGER DEFAULT 5, -- 1 (highest) to 10 (lowest)
-    payload     TEXT NOT NULL,     -- JSON
-    status      TEXT DEFAULT 'pending', -- pending | processing | done | failed
-    created_at  TEXT NOT NULL,
-    processed_at TEXT
-);
-
+CREATE TABLE events ...
 -- Agent invocations: one row per model call
-CREATE TABLE invocations (
-    id           TEXT PRIMARY KEY,
-    event_id     TEXT REFERENCES events(id),
-    agent_type   TEXT NOT NULL,
-    project_id   TEXT,
-    model        TEXT NOT NULL,
-    context      TEXT NOT NULL,    -- full assembled prompt (JSON)
-    response     TEXT,             -- raw model response
-    tool_calls   TEXT,             -- JSON array of tool calls made
-    status       TEXT DEFAULT 'running',
-    started_at   TEXT NOT NULL,
-    finished_at  TEXT
-);
+CREATE TABLE invocations ...
 
 -- All tool calls: every side effect the system takes
-CREATE TABLE tool_calls (
-    id             TEXT PRIMARY KEY,
-    invocation_id  TEXT REFERENCES invocations(id),
-    tool_name      TEXT NOT NULL,
-    parameters     TEXT NOT NULL,  -- JSON
-    risk_level     TEXT NOT NULL,  -- low | medium | high
-    approval_id    TEXT,           -- NULL if auto-approved
-    result         TEXT,           -- JSON
-    status         TEXT DEFAULT 'pending', -- pending | approved | denied | executed | failed
-    created_at     TEXT NOT NULL,
-    executed_at    TEXT
-);
+CREATE TABLE tool_calls ...
 
 -- Human approval requests
-CREATE TABLE approvals (
-    id           TEXT PRIMARY KEY,
-    tool_call_id TEXT REFERENCES tool_calls(id),
-    prompt       TEXT NOT NULL,    -- description shown to human
-    response     TEXT,             -- 'approved' | 'denied'
-    responded_at TEXT,
-    created_at   TEXT NOT NULL
-);
-
+CREATE TABLE approvals ...
 -- Projects
-CREATE TABLE projects (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT,
-    brief       TEXT,              -- stable facts, goals, constraints
-    summary     TEXT,              -- medium-term compressed history
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-);
-
+CREATE TABLE projects ...
 -- Conversation and action history per project
-CREATE TABLE history (
-    id          TEXT PRIMARY KEY,
-    project_id  TEXT REFERENCES projects(id),
-    role        TEXT NOT NULL,     -- 'user' | 'agent' | 'tool'
-    content     TEXT NOT NULL,
-    created_at  TEXT NOT NULL
-);
+CREATE TABLE history ...
 
--- Task backlog (improvement candidates, user tasks, etc.)
-CREATE TABLE tasks (
-    id          TEXT PRIMARY KEY,
-    project_id  TEXT REFERENCES projects(id),
-    title       TEXT NOT NULL,
-    description TEXT,
-    source      TEXT,              -- 'user' | 'reflection' | 'agent'
-    priority    INTEGER DEFAULT 5,
-    status      TEXT DEFAULT 'open', -- open | in_progress | done | cancelled
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-);
 ```
 
 ---
 
 ## Tool Registry Design
 
-Every tool is a Python class registered at startup. The orchestrator exposes the schema to agents; agents emit structured tool call requests; the orchestrator validates, authorizes, and executes.
-
-```python
-# tools/registry.py (illustrative)
-
-class Tool:
-    name: str
-    description: str          # shown to agent in prompt
-    parameters_schema: dict   # JSON Schema for validation
-    risk_level: str           # 'low' | 'medium' | 'high'
-    allowed_agents: list[str] # which agent types may call this
-
-    def execute(self, parameters: dict) -> dict:
-        raise NotImplementedError
-```
-
-**MVP Tool Set:**
-
-| Tool | Risk | Description |
-|---|---|---|
-| `read_file` | low | Read a file within allowed paths |
-| `write_file` | medium | Write a file within allowed paths |
-| `list_directory` | low | List directory contents |
-| `run_tests` | low | Execute the test suite, return output |
-| `git_status` | low | Return current git status and diff |
-| `git_commit` | medium | Commit staged changes with a message |
-| `git_branch` | medium | Create or switch branches |
-| `git_rollback` | high | Revert to a previous commit |
-| `shell_run` | high | Run an allowlisted shell command |
-| `notify_user` | low | Send a notification to the user |
-| `read_task_list` | low | Read the current task backlog |
-| `write_task` | low | Add or update a task |
-
-Risk levels map to authorization behaviour: `low` auto-approves, `medium` logs but auto-approves in dev mode, `high` always requires human approval.
-
----
+We're using the Pydantic library to programmatically define the tool parameter schemas, and to serialise/deserialise tool invocations and results.
 
 ## Agent Invocation Flow
 
-For every agent call the sequence is:
+The prompt loop will has two levels:
 
-1. **Context assembly** — context manager pulls project brief, recent history (last N tokens), and (in Phase 2) RAG-retrieved relevant chunks. Global user preferences appended.
-2. **Prompt construction** — base system prompt + tool schema + assembled context + task description.
-3. **Model call** — via LiteLLM, routing to Ollama or hosted API based on config.
-4. **Response parsing** — extract reasoning text and any tool call requests from the response.
-5. **Tool execution loop** — for each tool call: validate schema, check agent permissions, check risk level / approval, execute, append result to context, continue loop.
-6. **Result logging** — full invocation record written to DB including assembled context, response, and all tool calls.
-7. **History update** — agent response and tool results appended to project history.
-
-The agent communicates tool calls in a simple structured format within its response:
-
-```
-<tool_call>
-{
-  "tool": "read_file",
-  "parameters": { "path": "core/event_queue.py" }
-}
-</tool_call>
-```
-
-The invoker parses these tags after each model response and runs the execution loop until no more tool calls are emitted or the iteration cap is reached.
+Outer Loop: keep prompting until the model's last response did not include a tool call or until a network error or max iterations exceeded.
+Note: when a parsing or validation error occurs on the model's response, feed the error back into the next prompt.
+Inner Loop: keep prompting until model response is not 'length'.
 
 ---
 
@@ -292,46 +168,7 @@ The orchestrator blocks on this prompt. The agent waits. On approval the tool ex
 
 ## Configuration (config.yaml)
 
-```yaml
-models:
-  default_local: "ollama/llama3.2"
-  default_remote: "anthropic/claude-sonnet-4-6"
-  routing:
-    # use local for low-complexity tasks, remote for high
-    local_for: ["summarize", "classify", "reflect"]
-    remote_for: ["dev", "research", "plan"]
-
-paths:
-  allowed_read:  ["./", "~/projects/"]
-  allowed_write: ["./", "~/projects/"]
-  db: "./storage/orchestrator.db"
-  logs: "./logs/"
-
-tools:
-  shell_allowlist:
-    - "pytest"
-    - "python"
-    - "git"
-    - "ls"
-    - "cat"
-    - "grep"
-
-agents:
-  dev_agent:
-    allowed_tools: ["read_file", "write_file", "git_status", "git_commit",
-                    "git_branch", "git_rollback", "run_tests", "notify_user",
-                    "read_task_list", "write_task"]
-    max_iterations: 10
-    approval_required_for: ["high"]
-
-approval:
-  mode: "terminal"   # terminal | file | (later: web | notification)
-
-context:
-  recent_buffer_tokens: 4000
-  summary_tokens: 1000
-  brief_tokens: 500
-```
+Tunable config is kept in `config.yaml` at the root of the orchestrator.
 
 ---
 
@@ -372,9 +209,6 @@ Use the following conventions consistently:
 # [SAFETY-CRITICAL] This module implements the approval gate. Any change here
 # requires human review regardless of risk classification. Do not modify as
 # part of autonomous improvement tasks.
-
-# [DO NOT SIMPLIFY] This check appears redundant but guards against a subtle
-# race condition described in ARCHITECTURE.md § Known Limitations.
 
 # [INVARIANT] approved must be checked before executed. Reversing this order
 # breaks the audit log integrity guarantee.

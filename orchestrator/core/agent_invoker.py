@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Callable
@@ -34,11 +35,29 @@ logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 # [INVARIANT] Iteration cap prevents runaway loops. An agent that needs more
 # than DEFAULT_MAX_ITERATIONS for a sensible task is almost certainly stuck.
 # Raise only after confirming the model is reasoning correctly on the task.
-DEFAULT_MAX_ITERATIONS = 10
+DEFAULT_MAX_ITERATIONS = 100
 
-# Regex for extracting <tool_call>...</tool_call> blocks.
+# Regex for strict parsing: requires a closing </tool_call> tag.
 # re.DOTALL so the JSON body can span multiple lines.
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+
+# Regex for lenient parsing: matches an opening <tool_call> tag with no
+# closing tag. Used as a fallback when models omit the closing tag on the
+# last line of their response. raw_decode extracts valid JSON from whatever
+# follows; if the JSON is also incomplete the parse will fail and we treat
+# that as genuine truncation.
+_TOOL_CALL_OPEN_RE = re.compile(r"<tool_call>\s*(\{.*)", re.DOTALL)
+
+# finish_reason values that indicate the model was cut off by a token limit.
+# "length" is the standard value; "max_tokens" is used by some providers.
+_TRUNCATED_FINISH_REASONS = {"length", "max_tokens"}
+
+# Maximum number of continuation requests to send after a truncated response
+# before giving up. Each continuation appends the partial assistant turn and
+# a "please continue" user turn to a local message list, then calls the LLM
+# again and concatenates the new chunk. The caller's message list is not
+# touched until the full assembled text is ready.
+_MAX_CONTINUATIONS = 5
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +71,7 @@ async def invoke(
     model: str,
     registry: ToolRegistry,
     api_key: str | None = None,
+    max_tokens: int | None = None,
     project_id: str | None = None,
     event_id: str | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -69,7 +89,14 @@ async def invoke(
             "status": "done" | "failed",
             "response": str,          # final agent text
             "tool_calls": list[dict], # summary of every tool call made
+            "steps": list[dict],      # intermediate reasoning + tool requests
         }
+
+    Each entry in "steps" has:
+        {"reasoning": str, "tool": str, "parameters": dict}
+    "reasoning" is the agent's prose from a response that contained a tool
+    call (the <tool_call> block itself is stripped). Callers can present this
+    to the user so they see what the agent was thinking while it worked.
     """
     invocation_id = _new_id("inv")
     started_at = _now()
@@ -101,20 +128,84 @@ async def invoke(
 
     final_response = ""
     status = "failed"
+    # Each entry: {"reasoning": str, "tool": str, "parameters": dict}.
+    # Populated whenever the agent emits a tool call so callers can show
+    # the agent's intermediate reasoning to the user rather than just the
+    # final response.
+    steps: list[dict] = []
 
     for iteration in range(max_iterations):
         _log_outgoing(messages[-1], iteration)
         # uncomment here if you want the full prompt printed
         # logger.debug("→ LLM FULL PROMPT iter=%d\n%s", iteration + 1, json.dumps(messages, indent=2))
 
-        raw = await litellm.acompletion(model=model, messages=messages, api_key=api_key)
-        assistant_text: str = raw.choices[0].message.content or ""
+        logger.info(
+            "→ LLM  agent=%s  model=%s  iter=%d/%d  msgs=%d",
+            agent_type, model, iteration + 1, max_iterations, len(messages),
+        )
+        _t0 = time.monotonic()
+        try:
+            assistant_text, finish_reason, _elapsed = await _collect_full_response(
+                messages=messages,
+                model=model,
+                api_key=api_key,
+                max_tokens=max_tokens,
+                iteration=iteration,
+            )
+        except Exception as exc:
+            _elapsed = time.monotonic() - _t0
+            status_code = getattr(exc, "status_code", None)
+            logger.error(
+                "LLM call failed  agent=%s  model=%s  iter=%d  elapsed=%.1fs"
+                "  status_code=%s  error=%s",
+                agent_type, model, iteration + 1, _elapsed, status_code, exc,
+                exc_info=True,
+            )
+            final_response = f"LLM call failed (status_code={status_code}): {exc}"
+            status = "failed"
+            break
+        logger.info(
+            "← LLM  agent=%s  iter=%d  chars=%d  elapsed=%.1fs",
+            agent_type, iteration + 1, len(assistant_text), _elapsed,
+        )
         _log_incoming(assistant_text, iteration)
         messages.append({"role": "assistant", "content": assistant_text})
 
         call_request = _parse_tool_call(assistant_text)
         if call_request is None:
-            # The agent is done when it stops emitting tool calls. That's it. 
+            # Distinguish between three failure modes before declaring done:
+            #
+            # 1. Token-limit truncation (authoritative signal from the API).
+            #    The model was cut off regardless of what's in the text.
+            if finish_reason in _TRUNCATED_FINISH_REASONS:
+                logger.warning(
+                    "iter=%d LLM response truncated by token limit (finish_reason=%r). "
+                    "Partial response (first 500 chars): %.500s",
+                    iteration + 1, finish_reason, assistant_text,
+                )
+                final_response = (
+                    f"Response truncated by model token limit "
+                    f"(finish_reason={finish_reason!r}). The in-flight tool call was lost."
+                )
+                status = "failed"
+                break
+
+            # 2. Incomplete tool call: <tool_call> tag present but JSON could
+            #    not be parsed even with lenient (no-closing-tag) mode. This
+            #    means the JSON body itself was cut off mid-stream.
+            if "<tool_call>" in assistant_text:
+                logger.warning(
+                    "iter=%d LLM response contained an unparseable tool call "
+                    "(finish_reason=%r). Partial response (first 500 chars): %.500s",
+                    iteration + 1, finish_reason, assistant_text,
+                )
+                final_response = (
+                    "Tool call could not be parsed — JSON was incomplete or malformed."
+                )
+                status = "failed"
+                break
+
+            # 3. No tool call at all — the agent is done.
             # The orchestrator has no independent view of whether the work is actually complete — it just trusts that if the model
             # produced a response with no <tool_call> block, the job is finished.
             # TODO: improve task completion evaluation criteria
@@ -124,6 +215,18 @@ async def invoke(
 
         tool_name = call_request.get("tool", "")
         parameters = call_request.get("parameters", {})
+
+        # Extract the agent's prose (everything outside the <tool_call> block)
+        # and log it at INFO so it is visible to someone watching the server.
+        # Also record it in steps so callers can surface it to the end user.
+        reasoning = _TOOL_CALL_RE.sub("", assistant_text).strip()
+        if reasoning:
+            logger.info("agent reasoning iter=%d:\n%s", iteration + 1, _truncate_log(reasoning))
+        logger.info(
+            "tool request iter=%d  tool=%r  params=%s",
+            iteration + 1, tool_name, json.dumps(parameters, separators=(",", ":")),
+        )
+        steps.append({"reasoning": reasoning, "tool": tool_name, "parameters": parameters})
 
         tc_id = _new_id("tc")
         result = _run_tool(
@@ -177,6 +280,7 @@ async def invoke(
         "status": status,
         "response": final_response,
         "tool_calls": tool_calls_log,
+        "steps": steps,
     }
 
 
@@ -185,15 +289,112 @@ async def invoke(
 # ---------------------------------------------------------------------------
 
 
+async def _collect_full_response(
+    messages: list[dict],
+    model: str,
+    api_key: str | None,
+    max_tokens: int | None,
+    iteration: int,
+) -> tuple[str, str, float]:
+    """
+    Call the LLM and, if the response is truncated, send continuation requests
+    until the model signals completion or the continuation cap is reached.
+
+    Returns (full_assembled_text, final_finish_reason, total_elapsed_seconds).
+
+    Continuation strategy: on each truncated chunk, append the partial assistant
+    turn and a "please continue" user turn to a LOCAL copy of the message list,
+    then call the LLM again and concatenate the new chunk onto the full text.
+    These intermediate turns are never written back to the caller's list; the
+    caller appends a single consolidated assistant message after this returns.
+
+    If continuations are exhausted and the response is still truncated, the
+    truncated finish_reason is returned as-is so the caller can handle it.
+    """
+    local_messages = list(messages)  # snapshot; continuation turns stay local
+    full_text = ""
+    total_elapsed = 0.0
+
+    for attempt in range(_MAX_CONTINUATIONS + 1):
+        _llm_kwargs: dict = {"model": model, "messages": local_messages, "api_key": api_key}
+        if max_tokens is not None:
+            _llm_kwargs["max_tokens"] = max_tokens
+
+        t0 = time.monotonic()
+        raw = await litellm.acompletion(**_llm_kwargs)
+        total_elapsed += time.monotonic() - t0
+
+        chunk = raw.choices[0].message.content or ""
+        finish_reason = raw.choices[0].finish_reason or ""
+        full_text += chunk
+
+        if finish_reason not in _TRUNCATED_FINISH_REASONS:
+            break
+
+        if attempt < _MAX_CONTINUATIONS:
+            logger.warning(
+                "iter=%d continuation=%d/%d — response truncated (finish_reason=%r), "
+                "assembled_chars=%d, requesting continuation",
+                iteration + 1, attempt + 1, _MAX_CONTINUATIONS, finish_reason, len(full_text),
+            )
+            local_messages.append({"role": "assistant", "content": chunk})
+            local_messages.append({
+                "role": "user",
+                "content": (
+                    "[CONTINUE] Your previous response was cut off by the token limit. "
+                    "Continue exactly from where you left off, without repeating any content."
+                ),
+            })
+        else:
+            logger.warning(
+                "iter=%d continuation cap (%d) reached — response still truncated "
+                "(finish_reason=%r), assembled_chars=%d",
+                iteration + 1, _MAX_CONTINUATIONS, finish_reason, len(full_text),
+            )
+
+    return full_text, finish_reason, total_elapsed
+
+
 def _parse_tool_call(text: str) -> dict | None:
-    """Return the first <tool_call> JSON object found in text, or None."""
+    """
+    Return the first <tool_call> JSON object found in text, or None.
+
+    Two-pass strategy:
+    1. Strict: requires a closing </tool_call> tag.
+    2. Lenient: accepts an unclosed opening tag — some models omit the closing
+       tag when the tool call is the last content in their response. raw_decode
+       extracts the first valid JSON object and ignores anything after it
+       (e.g. a stray extra brace). If the JSON itself is incomplete the decode
+       fails and None is returned, which the caller treats as genuine truncation.
+    """
     match = _TOOL_CALL_RE.search(text)
+    lenient = False
     if not match:
-        return None
+        match = _TOOL_CALL_OPEN_RE.search(text)
+        if not match:
+            return None
+        lenient = True
+
+    raw_json = match.group(1).strip()
     try:
-        return json.loads(match.group(1))
-    except json.JSONDecodeError:
+        obj, end = json.JSONDecoder().raw_decode(raw_json)
+    except json.JSONDecodeError as exc:
+        logger.warning("_parse_tool_call: JSON parse error — %s — in: %r", exc, raw_json[:200])
         return None
+
+    if not isinstance(obj, dict):
+        return None
+
+    if lenient:
+        logger.debug("_parse_tool_call: parsed tool call from unclosed <tool_call> block")
+    else:
+        trailing = raw_json[end:].strip()
+        if trailing:
+            logger.warning(
+                "_parse_tool_call: trailing garbage after JSON (%d chars): %r",
+                len(trailing), trailing,
+            )
+    return obj
 
 
 def _run_tool(

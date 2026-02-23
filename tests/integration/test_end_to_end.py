@@ -2,6 +2,7 @@
 # Verifies that invoker + tool registry + DB form a working pipeline
 # without mocking the tool layer (only LiteLLM is mocked).
 
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -48,7 +49,7 @@ async def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, caplog):
 
     read_response = _mock_response(
         f'Reading the file now.\n'
-        f'<tool_call>\n{{"tool": "read_file", "parameters": {{"path": "{file_path}"}}}}\n</tool_call>'
+        f'<tool_call>\n{{"tool": "read_file", "parameters": {{"path": {json.dumps(file_path)}}}}}\n</tool_call>'
     )
     notify_response = _mock_response(
         '<tool_call>\n'

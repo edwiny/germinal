@@ -1,6 +1,8 @@
-# Purpose: Git operation tools: git_status, git_commit, git_branch, git_rollback.
+# Purpose: Git operation tools: git_status, git_commit, git_add, git_branch,
+#          git_rollback, git_diff, git_list_branches, git_log.
 # Relationships: Registered into tools/registry.py via make_* factories;
-#               called by dev_agent through core/agent_invoker.py.
+#               called by dev_agent (and task_agent for git_list_branches)
+#               through core/agent_invoker.py.
 
 # All tools call subprocess git with a fixed argv list (shell=False) to prevent
 # injection. git_rollback is high-risk and requires human approval before execution.
@@ -120,7 +122,7 @@ def make_git_commit_tool() -> Tool:
         name="git_commit",
         description=(
             "Commit currently staged changes with the given message. "
-            "Stage files first with shell_run(['git', 'add', '<path>']) before calling this. "
+            "Stage files first with git_add before calling this. "
             "Returns success=false if there is nothing staged or another error occurs."
         ),
         parameters_schema=model_to_json_schema(GitCommitParams),
@@ -243,4 +245,186 @@ def make_git_rollback_tool() -> Tool:
         allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=GitRollbackParams,
+    )
+
+
+# ---------------------------------------------------------------------------
+# git_diff
+# ---------------------------------------------------------------------------
+
+class GitDiffParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # No parameters — always diffs working tree against HEAD.
+
+
+class GitDiffResult(BaseModel):
+    diff: str = Field(description="Full diff output from git diff HEAD.")
+    returncode: int = Field(description="Return code from git diff.")
+
+
+def make_git_diff_tool() -> Tool:
+    """Return a git_diff tool that shows the full diff against HEAD."""
+
+    def execute(_params: dict) -> dict:
+        result = _git(["diff", "HEAD"])
+        return GitDiffResult(
+            diff=result["stdout"],
+            returncode=result["returncode"],
+        ).model_dump()
+
+    return Tool(
+        name="git_diff",
+        description="Show the full diff of working tree changes against HEAD.",
+        parameters_schema=model_to_json_schema(GitDiffParams),
+        risk_level="low",
+        allowed_agents=["dev_agent"],
+        _execute=execute,
+        params_model=GitDiffParams,
+    )
+
+
+# ---------------------------------------------------------------------------
+# git_add
+# ---------------------------------------------------------------------------
+
+class GitAddParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    paths: list[str] = Field(
+        min_length=1,
+        description="File paths to stage.",
+    )
+
+
+class GitAddResult(BaseModel):
+    stdout: str = Field(description="Standard output from git add.")
+    stderr: str = Field(description="Standard error from git add.")
+    returncode: int = Field(description="Return code from git add.")
+    success: bool = Field(description="True if staging succeeded (returncode 0).")
+
+
+def make_git_add_tool() -> Tool:
+    """Return a git_add tool that stages files for commit."""
+
+    def execute(params: dict) -> dict:
+        paths = params["paths"]
+        # The -- separator prevents paths that start with '-' from being
+        # mistaken for options. Required when paths come from agent input.
+        result = _git(["add", "--"] + paths)
+        return GitAddResult(
+            stdout=result["stdout"],
+            stderr=result["stderr"],
+            returncode=result["returncode"],
+            success=result["returncode"] == 0,
+        ).model_dump()
+
+    return Tool(
+        name="git_add",
+        description=(
+            "Stage one or more files for the next commit. "
+            "Provide at least one path. Use git_commit after staging."
+        ),
+        parameters_schema=model_to_json_schema(GitAddParams),
+        risk_level="medium",
+        allowed_agents=["dev_agent"],
+        _execute=execute,
+        params_model=GitAddParams,
+    )
+
+
+# ---------------------------------------------------------------------------
+# git_list_branches
+# ---------------------------------------------------------------------------
+
+class GitListBranchesParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # No parameters — lists all local and remote branches.
+
+
+class GitListBranchesResult(BaseModel):
+    branches: list[str] = Field(
+        description="All local and remote branch names, one per entry, trimmed.",
+    )
+    current: str = Field(description="The currently checked-out branch name.")
+    returncode: int = Field(description="Return code from git branch.")
+
+
+def make_git_list_branches_tool() -> Tool:
+    """Return a git_list_branches tool that lists all branches."""
+
+    def execute(_params: dict) -> dict:
+        result = _git(["branch", "-a"])
+        branches = []
+        current = ""
+        for raw_line in result["stdout"].splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("* "):
+                current = line[2:].strip()
+                branches.append(current)
+            else:
+                branches.append(line)
+        return GitListBranchesResult(
+            branches=branches,
+            current=current,
+            returncode=result["returncode"],
+        ).model_dump()
+
+    return Tool(
+        name="git_list_branches",
+        description=(
+            "List all local and remote branches. "
+            "Branches named dev-agent/* indicate work ready for human review."
+        ),
+        parameters_schema=model_to_json_schema(GitListBranchesParams),
+        risk_level="low",
+        allowed_agents=["dev_agent", "task_agent"],
+        _execute=execute,
+        params_model=GitListBranchesParams,
+    )
+
+
+# ---------------------------------------------------------------------------
+# git_log
+# ---------------------------------------------------------------------------
+
+class GitLogParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    n: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Number of recent commits to return.",
+    )
+
+
+class GitLogResult(BaseModel):
+    log: str = Field(description="Recent commit history in oneline format.")
+    returncode: int = Field(description="Return code from git log.")
+
+
+def make_git_log_tool() -> Tool:
+    """Return a git_log tool that shows recent commit history."""
+
+    def execute(params: dict) -> dict:
+        n = params.get("n", 10)
+        result = _git(["log", "--oneline", f"-{n}"])
+        return GitLogResult(
+            log=result["stdout"],
+            returncode=result["returncode"],
+        ).model_dump()
+
+    return Tool(
+        name="git_log",
+        description=(
+            "Return recent commit history in oneline format. "
+            "Use n to control how many commits to return (1–100, default 10)."
+        ),
+        parameters_schema=model_to_json_schema(GitLogParams),
+        risk_level="low",
+        allowed_agents=["dev_agent"],
+        _execute=execute,
+        params_model=GitLogParams,
     )

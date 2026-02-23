@@ -301,7 +301,7 @@ class NetworkAdapter:
                 }),
             )
 
-        response_text: str = result.get("response", "")
+        response_text: str = _build_response_text(result)
         invocation_id: str = result.get("invocation_id", f"inv_{uuid.uuid4().hex[:16]}")
         finish_reason = "stop" if result.get("status") == "done" else "length"
         completion_id = f"chatcmpl-{invocation_id}"
@@ -431,6 +431,44 @@ def _sse(
         "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
     }
     return f"data: {json.dumps(chunk)}\n\n".encode()
+
+
+def _build_response_text(result: dict) -> str:
+    """
+    Build the text shown to the user from an invoke() result.
+
+    When the agent used tools, the intermediate reasoning steps are prepended
+    so the user can see what the agent was thinking while it worked, not just
+    the bare final answer. Format:
+
+        <reasoning prose>
+        [Tool: <name> | Parameters: <json>]
+
+        <reasoning prose>
+        [Tool: <name> | Parameters: <json>]
+
+        <final response>
+    """
+    steps: list[dict] = result.get("steps", [])
+    final: str = result.get("response", "")
+
+    if not steps:
+        return final
+
+    parts: list[str] = []
+    for step in steps:
+        reasoning = step.get("reasoning", "").strip()
+        tool = step.get("tool", "")
+        params = step.get("parameters", {})
+        params_str = json.dumps(params) if params else "{}"
+        if reasoning:
+            parts.append(reasoning)
+        parts.append(f"[Tool: {tool} | Parameters: {params_str}]")
+
+    if final:
+        parts.append(final)
+
+    return "\n\n".join(parts)
 
 
 def _last_user_message(messages: list[dict[str, Any]]) -> str:

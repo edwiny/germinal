@@ -42,9 +42,14 @@ from .tools.filesystem import (
     make_read_file_tool,
     make_write_file_tool,
 )
+from .tools.code_quality import make_check_syntax_tool, make_lint_tool
 from .tools.git import (
+    make_git_add_tool,
     make_git_branch_tool,
     make_git_commit_tool,
+    make_git_diff_tool,
+    make_git_list_branches_tool,
+    make_git_log_tool,
     make_git_rollback_tool,
     make_git_status_tool,
 )
@@ -55,10 +60,6 @@ from .tools.shell import make_run_tests_tool, make_shell_run_tool
 # Poll interval when the event queue is empty. 500ms balances responsiveness
 # against unnecessary CPU spin. Do not set below ~100ms on SQLite.
 _IDLE_SLEEP_SECONDS = 0.5
-
-# Default timer tick interval in seconds. Keep short during bootstrap so
-# there is something to observe quickly; tune upward in production.
-_TIMER_INTERVAL_SECONDS = 60
 
 
 def setup_logging(level: str) -> None:
@@ -109,20 +110,30 @@ def build_full_registry(config: dict, db_path: str) -> ToolRegistry:
     registry.register(make_run_tests_tool())
     registry.register(make_git_status_tool())
     registry.register(make_git_commit_tool())
+    registry.register(make_git_add_tool())
     registry.register(make_git_branch_tool())
     registry.register(make_git_rollback_tool())
+    registry.register(make_git_diff_tool())
+    registry.register(make_git_list_branches_tool())
+    registry.register(make_git_log_tool())
+    registry.register(make_lint_tool())
+    registry.register(make_check_syntax_tool())
     return registry
 
 
-def _select_model(config: dict, model_key: str) -> tuple[str, str | None]:
+def _select_model(config: dict, model_key: str) -> tuple[str, str | None, int | None]:
     """
-    Resolve model_key → (litellm model string, api_key | None).
+    Resolve model_key → (litellm model string, api_key | None, max_tokens | None).
 
     model_key is first looked up in models.categories by category name.
     If not found as a category, it is treated as a direct model name in
     models.list. The ORCHESTRATOR_MODEL env var overrides the resolved name
     when model_key is "default", allowing the active model to be changed at
     runtime without editing config.yaml.
+
+    max_tokens is taken from the model entry in config; None means no explicit
+    limit is passed to LiteLLM (the provider's default applies). Set this per
+    model to prevent token-limit truncation of large tool call responses.
     """
     models_cfg = config["models"]
     categories = {c["category"]: c for c in models_cfg.get("categories", [])}
@@ -145,7 +156,8 @@ def _select_model(config: dict, model_key: str) -> tuple[str, str | None]:
     entry = index[resolved_name]
     api_key_env = entry.get("api_key_env", "")
     api_key = os.environ.get(api_key_env) if api_key_env else None
-    return entry["model"], api_key
+    max_tokens: int | None = entry.get("max_tokens")
+    return entry["model"], api_key, max_tokens
 
 
 def _make_approval_gate(db_path: str):
@@ -225,20 +237,13 @@ async def _event_loop(
         )
 
         try:
-            routing = route_event(event, config)
+            routing = route_event(event)
         except UnroutableEvent as exc:
             logger_event.warning("Unroutable — %s", exc)
             fail_event(db_path, event_id)
             # Resolve any waiting HTTP future with an error result so the
             # client gets a response instead of hanging until timeout.
             _resolve_pending(pending_http, event_id, {"status": "failed", "response": str(exc), "tool_calls": [], "invocation_id": ""})
-            continue
-
-        preflight = routing.get("preflight")
-        if preflight is not None and not preflight():
-            logger_event.info("preflight skipped — no action needed")
-            complete_event(db_path, event_id)
-            _resolve_pending(pending_http, event_id, {"status": "done", "response": "", "tool_calls": [], "invocation_id": ""})
             continue
 
         # Resolve project_id: event payload takes priority, then config default.
@@ -257,7 +262,7 @@ async def _event_loop(
         # use {payload[agent_type]} in its task_template and set agent_type
         # from the payload; until that rule exists, fall back to routing result.
         agent_type = routing["agent_type"]
-        model, api_key = _select_model(config, routing["model_key"])
+        model, api_key, max_tokens = _select_model(config, routing["model_key"])
         agent_reg = _agent_registry(agent_type, full_registry, config)
         max_iter = config.get("agents", {}).get(agent_type, {}).get("max_iterations", 10)
 
@@ -267,6 +272,7 @@ async def _event_loop(
                 agent_type=agent_type,
                 model=model,
                 api_key=api_key,
+                max_tokens=max_tokens,
                 registry=agent_reg,
                 project_id=project_id,
                 event_id=event_id,
@@ -336,18 +342,6 @@ async def main() -> None:
             ),
         )
 
-    # Start timer as an asyncio task (no threads).
-    timer_stop = asyncio.Event()
-    timer_task = asyncio.create_task(
-        timer_adapter.run(
-            db_path=db_path,
-            interval_seconds=_TIMER_INTERVAL_SECONDS,
-            stop_event=timer_stop,
-        ),
-        name="timer-adapter",
-    )
-    logger_main.info("Timer adapter started (%ds interval).", _TIMER_INTERVAL_SECONDS)
-
     # Start network adapter if enabled.
     network_cfg = config.get("network", {})
     net_adapter: NetworkAdapter | None = None
@@ -371,8 +365,6 @@ async def main() -> None:
             stop_event=stop_event,
         )
     finally:
-        timer_stop.set()
-        await asyncio.wait_for(timer_task, timeout=5.0)
         if net_adapter:
             await net_adapter.stop()
         logger_main.info("Done.")
