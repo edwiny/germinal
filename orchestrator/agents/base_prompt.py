@@ -24,7 +24,7 @@ Every response must be a JSON object with exactly these fields:
 A tool_call has the form:
   {"tool": "<tool_name>", "parameters": {<json parameters>}}
 
-When your task is complete, set tool_call to null and put your final answer in reasoning.
+When your task is complete, set tool_call to null and put a summary of your actions and findings in reasoning.
 """
 
 
