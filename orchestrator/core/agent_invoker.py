@@ -55,7 +55,14 @@ _MAX_VALIDATION_RETRIES = 3
 
 # Module-level instructor client wrapping LiteLLM's async completion function.
 # Tests replace this by patching _instructor_client.chat.completions.create.
-_instructor_client = instructor.from_litellm(acompletion)
+#
+# We use JSON mode rather than the default TOOLS mode. In TOOLS mode instructor
+# wraps AgentResponse as an OpenAI tool definition, which conflicts with the
+# system prompt that already instructs the model to return a plain JSON object.
+# That conflict causes models to correctly identify the outer AgentResponse
+# structure but leave the inner ToolCallRequest.parameters dict empty. JSON
+# mode keeps the extraction mechanism consistent with the system prompt.
+_instructor_client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +74,11 @@ class ToolCallRequest(BaseModel):
     tool: str = Field(description="Name of the registered tool to invoke.")
     parameters: dict = Field(
         default_factory=dict,
-        description="Parameters for the tool, matching its registered JSON schema.",
+        description=(
+            "Parameters for the tool. You MUST populate this with the actual "
+            "key/value pairs required by the tool's schema as listed in AVAILABLE "
+            "TOOLS. Do not leave this empty if the tool has required parameters."
+        ),
     )
 
 
