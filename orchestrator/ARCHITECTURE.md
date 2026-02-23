@@ -36,9 +36,9 @@ set, falling back to jsonschema for any future unmigrated tool.
 ## Module Map
 
 ### `main.py`
-Phase 1 event loop entry point. Loads `config.yaml`, initialises the DB,
-registers all Phase 1 tools, starts the timer adapter, resets any stale events
-from a previous crash, and loops: dequeue → route → invoke → complete/fail.
+Entry point. Loads `config.yaml`, initialises the DB, registers all tools,
+resets any stale events from a previous crash, and loops:
+dequeue → route → invoke → complete/fail.
 SIGINT and SIGTERM trigger a graceful shutdown after the current event finishes.
 
 ### `config.yaml`
@@ -86,8 +86,9 @@ rather than reaching the queue or router with invalid data.
 
 ### `core/router.py`
 Rules-based dispatcher. Given an event, returns agent type, model key, and
-task description. Template expansion supports `{payload[key]}` references only
-(no eval, no Jinja). Unknown events raise `UnroutableEvent`.
+task description. Rules match on `source` and `type`; the task description is
+taken directly from `payload["message"]` — rules do not modify prompt content.
+Unknown events raise `UnroutableEvent`.
 
 ### `agents/base_prompt.py`
 Constructs the system prompt: base agent instructions + tool catalogue as JSON.
@@ -135,9 +136,22 @@ allowlist check. Pydantic does not coerce between the two union branches; the
 type is preserved as-is and the execute function handles both cases.
 
 ### `tools/git.py`
-Implements `git_status`, `git_commit`, `git_branch`, `git_rollback`. All use
-`subprocess.run(..., shell=False)` with fixed argv arrays. Each tool defines
-Pydantic params and result models.
+Implements `git_status`, `git_commit`, `git_add`, `git_branch`, `git_rollback`,
+`git_diff`, `git_list_branches`, `git_log`. All use `subprocess.run(..., shell=False)`
+with fixed argv arrays. Each tool defines Pydantic params and result models.
+
+`git_list_branches` is available to both `dev_agent` and `task_agent` — branch
+names following the `dev-agent/*` convention act as a natural work queue visible
+to both agents.
+
+### `tools/code_quality.py`
+Implements `lint` (runs ruff, falls back to flake8 if not found) and
+`check_syntax` (runs `python -m py_compile` via `sys.executable`).
+
+`lint` returns `tool_used` so callers know which linter ran. If neither ruff
+nor flake8 is found, an error dict is returned — the tool never raises.
+`check_syntax` is intentionally lightweight: use it as a first pass after
+writing or editing a file, before invoking the full test suite.
 
 ### `tools/notify.py`
 Implements `notify_user`. Phase 1 transport is stderr. Interface is stable.
@@ -404,3 +418,37 @@ validation are derived from a single source and can never drift apart.
 - `pydantic>=2.0.0` is added to `requirements.txt`. The Pydantic v2 API
   (`model_validate`, `model_dump`, `model_json_schema`, `ConfigDict`) is used
   throughout; v1 compatibility shims are not used.
+
+---
+
+### DECISION — git_add as an explicit tool rather than routing through shell_run
+Date: 2026-02-22
+Status: active
+
+**Decision:** Implement `git_add` as a dedicated tool in `tools/git.py` rather
+than instructing `dev_agent` to stage files via `shell_run(['git', 'add', ...])`.
+
+**Reasoning:**
+- **Audit trail clarity.** Every `tool_calls` row records the tool name and
+  parameters. A `git_add` row makes the staging step explicit and searchable
+  in the history. A `shell_run` row hides intent — the reader must inspect the
+  `parameters` JSON to understand what was staged.
+- **Allowlist independence.** `shell_run` is a high-risk tool gated by the
+  shell allowlist and always requires approval. `git_add` is medium-risk and
+  can be approved automatically in dev mode. Staging files should not require
+  the same approval weight as arbitrary shell execution.
+- **Narrower surface.** `git_add` accepts only `paths: list[str]` and passes
+  them after `--` to prevent flag injection. `shell_run` with `git add` would
+  allow any argument the agent chose to append.
+
+**Alternatives considered:**
+- `shell_run(['git', 'add', '<path>'])`: works but conflates staging with
+  arbitrary command execution in the approval and audit systems.
+- Implicit staging inside `git_commit` (auto-add all changes): removes the
+  explicit staging step, making partial commits impossible and giving the agent
+  less control over what is committed.
+
+**Consequences:**
+- `dev_agent` uses `git_add` → `git_commit` as the standard two-step workflow.
+- `git_commit` description updated to reference `git_add` instead of `shell_run`.
+- `shell_run` remains available for cases where no dedicated tool exists.

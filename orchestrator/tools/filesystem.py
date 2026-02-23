@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tools.registry import Tool, model_to_json_schema
+from .registry import Tool, model_to_json_schema
 
 
 def _is_allowed(path: str, allowed_paths: list[str]) -> bool:

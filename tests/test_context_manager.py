@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.context_manager import (
+from orchestrator.core.context_manager import (
     append_to_history,
     assemble_context,
     ensure_project,
     maybe_summarise,
 )
-from storage.db import get_conn, init_db
+from orchestrator.storage.db import get_conn, init_db
 
 
 @pytest.fixture()
@@ -174,7 +174,7 @@ async def test_maybe_summarise_skips_when_within_budget(tmp_db):
     # "short" is well under 100 tokens so no summarisation should happen.
     append_to_history("proj-1", "user", "short", tmp_db)
 
-    with patch("core.context_manager.litellm.acompletion") as mock_completion:
+    with patch("orchestrator.core.context_manager.litellm.acompletion") as mock_completion:
         await maybe_summarise("proj-1", tmp_db, "ollama/llama3.2", None, _CONFIG)
         mock_completion.assert_not_called()
 
@@ -196,7 +196,7 @@ async def test_maybe_summarise_triggers_updates_summary_and_deletes_old_rows(tmp
     mock_resp.choices[0].message.content = "Compressed summary text."
 
     with patch(
-        "core.context_manager.litellm.acompletion",
+        "orchestrator.core.context_manager.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ):
         await maybe_summarise("proj-1", tmp_db, "ollama/llama3.2", None, _CONFIG)

@@ -1,32 +1,38 @@
-# Purpose: Assembles prompts, calls the language model via LiteLLM, parses
-#          tool calls from the response, executes them through the registry,
-#          and writes every step to the database.
+# Purpose: Assembles prompts, calls the language model via instructor + LiteLLM,
+#          extracts structured tool calls from the response, executes them through
+#          the registry, and writes every step to the database.
 # Relationships: Uses storage/db.py, tools/registry.py, agents/base_prompt.py.
 #               Called by main.py's event loop; approval_gate.py injected as callable.
 #
 # invoke() is an async coroutine. It must be awaited. The only blocking calls
 # inside it are SQLite helpers (sub-ms, acceptable) and tool.execute() calls
 # (also sync — tool authors must not perform long I/O in execute()). The LLM
-# call uses litellm.acompletion() which is truly async and yields to the event
-# loop while waiting for network I/O.
+# call uses instructor.from_litellm(acompletion) which is truly async.
+#
+# Response format: instructor extracts a structured AgentResponse (Pydantic model)
+# from every LLM call. The model includes a reasoning field (free text) and an
+# optional tool_call field. When tool_call is None the agent is considered done.
+# This replaces the previous XML <tool_call> tag parsing approach.
 
-import asyncio
 import json
 import logging
-import re
+import time
 import uuid
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Optional
 
 import litellm
-
+import instructor
+from instructor.core import IncompleteOutputException
+from litellm import acompletion
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("agent_invoker")
 
-from agents.base_prompt import build_system_prompt
-from core.context_manager import append_to_history, assemble_context, maybe_summarise
-from storage.db import get_conn
-from tools.registry import ToolRegistry
+from ..agents.base_prompt import build_system_prompt
+from .context_manager import append_to_history, assemble_context, maybe_summarise
+from ..storage.db import get_conn
+from ..tools.registry import ToolRegistry
 
 litellm.suppress_debug_info = True
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
@@ -34,11 +40,63 @@ logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 # [INVARIANT] Iteration cap prevents runaway loops. An agent that needs more
 # than DEFAULT_MAX_ITERATIONS for a sensible task is almost certainly stuck.
 # Raise only after confirming the model is reasoning correctly on the task.
-DEFAULT_MAX_ITERATIONS = 10
+DEFAULT_MAX_ITERATIONS = 100
 
-# Regex for extracting <tool_call>...</tool_call> blocks.
-# re.DOTALL so the JSON body can span multiple lines.
-_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+# Maximum number of continuation requests to send after a truncated response
+# before giving up. When instructor raises IncompleteOutputException (finish_reason
+# = 'length'), we cannot meaningfully concatenate partial JSON chunks — the schema
+# would be invalid. Instead we ask the model to regenerate from scratch.
+_MAX_CONTINUATIONS = 5
+
+# How many times instructor re-prompts the model when the response fails Pydantic
+# validation before raising. Each retry feeds the validation error back to the model
+# so it can correct its output.
+_MAX_VALIDATION_RETRIES = 3
+
+# Module-level instructor client wrapping LiteLLM's async completion function.
+# Tests replace this by patching _instructor_client.chat.completions.create.
+#
+# We use JSON mode rather than the default TOOLS mode. In TOOLS mode instructor
+# wraps AgentResponse as an OpenAI tool definition, which conflicts with the
+# system prompt that already instructs the model to return a plain JSON object.
+# That conflict causes models to correctly identify the outer AgentResponse
+# structure but leave the inner ToolCallRequest.parameters dict empty. JSON
+# mode keeps the extraction mechanism consistent with the system prompt.
+_instructor_client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
+
+
+# ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+
+class ToolCallRequest(BaseModel):
+    tool: str = Field(description="Name of the registered tool to invoke.")
+    parameters: dict = Field(
+        default_factory=dict,
+        description=(
+            "Parameters for the tool. You MUST populate this with the actual "
+            "key/value pairs required by the tool's schema as listed in AVAILABLE "
+            "TOOLS. Do not leave this empty if the tool has required parameters."
+        ),
+    )
+
+
+class AgentResponse(BaseModel):
+    reasoning: str = Field(
+        description=(
+            "Your reply to the user. When emitting a tool_call, briefly explain "
+            "what you are about to do. When tool_call is null, this is your final "
+            "answer — write it as if speaking directly to the user, not as internal notes."
+        )
+    )
+    tool_call: Optional[ToolCallRequest] = Field(
+        None,
+        description=(
+            "The tool to invoke next. Set to null when the task is complete "
+            "or no tool is needed."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +110,7 @@ async def invoke(
     model: str,
     registry: ToolRegistry,
     api_key: str | None = None,
+    max_tokens: int | None = None,
     project_id: str | None = None,
     event_id: str | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -67,9 +126,16 @@ async def invoke(
         {
             "invocation_id": str,
             "status": "done" | "failed",
-            "response": str,          # final agent text
+            "response": str,          # final agent reasoning text
             "tool_calls": list[dict], # summary of every tool call made
+            "steps": list[dict],      # intermediate reasoning + tool requests
         }
+
+    Each entry in "steps" has:
+        {"reasoning": str, "tool": str, "parameters": dict}
+    "reasoning" is the agent's prose from a response that contained a tool
+    call. Callers can present this to the user so they see what the agent
+    was thinking while it worked.
     """
     invocation_id = _new_id("inv")
     started_at = _now()
@@ -78,9 +144,9 @@ async def invoke(
     system_prompt = build_system_prompt(registry.schema_for_agent())
     messages = [
         {
-            "role": "system", 
-            "content": system_prompt, 
-            "cache_control": {"type": "ephemeral"}
+            "role": "system",
+            "content": system_prompt,
+            "cache_control": {"type": "ephemeral"},
         }
     ]
     if project_id and db_path and config:
@@ -101,29 +167,84 @@ async def invoke(
 
     final_response = ""
     status = "failed"
+    # Each entry: {"reasoning": str, "tool": str, "parameters": dict}.
+    # Populated whenever the agent emits a tool call so callers can show
+    # the agent's intermediate reasoning to the user rather than just the
+    # final response.
+    steps: list[dict] = []
 
     for iteration in range(max_iterations):
         _log_outgoing(messages[-1], iteration)
-        # uncomment here if you want the full prompt printed
-        # logger.debug("→ LLM FULL PROMPT iter=%d\n%s", iteration + 1, json.dumps(messages, indent=2))
 
-        raw = await litellm.acompletion(model=model, messages=messages, api_key=api_key)
-        assistant_text: str = raw.choices[0].message.content or ""
+        logger.info(
+            "→ LLM  agent=%s  model=%s  iter=%d/%d  msgs=%d",
+            agent_type, model, iteration + 1, max_iterations, len(messages),
+        )
+        _t0 = time.monotonic()
+        try:
+            response, assistant_text, _elapsed = await _collect_full_response(
+                messages=messages,
+                model=model,
+                api_key=api_key,
+                max_tokens=max_tokens,
+                iteration=iteration,
+            )
+        except IncompleteOutputException:
+            _elapsed = time.monotonic() - _t0
+            logger.warning(
+                "LLM response truncated (continuation cap exhausted) "
+                "agent=%s  model=%s  iter=%d  elapsed=%.1fs",
+                agent_type, model, iteration + 1, _elapsed,
+            )
+            final_response = (
+                "Response truncated by model token limit "
+                "(continuation cap exhausted)."
+            )
+            status = "failed"
+            break
+        except Exception as exc:
+            _elapsed = time.monotonic() - _t0
+            status_code = getattr(exc, "status_code", None)
+            logger.error(
+                "LLM call failed  agent=%s  model=%s  iter=%d  elapsed=%.1fs"
+                "  status_code=%s  error=%s",
+                agent_type, model, iteration + 1, _elapsed, status_code, exc,
+                exc_info=True,
+            )
+            final_response = f"LLM call failed (status_code={status_code}): {exc}"
+            status = "failed"
+            break
+
+        logger.info(
+            "← LLM  agent=%s  iter=%d  chars=%d  elapsed=%.1fs",
+            agent_type, iteration + 1, len(assistant_text), _elapsed,
+        )
         _log_incoming(assistant_text, iteration)
+
+        # Append the structured response as JSON text so the next prompt has
+        # a coherent conversation history matching what the model produced.
         messages.append({"role": "assistant", "content": assistant_text})
 
-        call_request = _parse_tool_call(assistant_text)
-        if call_request is None:
-            # The agent is done when it stops emitting tool calls. That's it. 
-            # The orchestrator has no independent view of whether the work is actually complete — it just trusts that if the model
-            # produced a response with no <tool_call> block, the job is finished.
+        if response.tool_call is None:
+            # No tool call — the agent has finished its work.
+            # The orchestrator has no independent view of whether the work is
+            # actually complete; it trusts that tool_call=null means done.
             # TODO: improve task completion evaluation criteria
-            final_response = assistant_text
+            final_response = response.reasoning or ""
             status = "done"
             break
 
-        tool_name = call_request.get("tool", "")
-        parameters = call_request.get("parameters", {})
+        tool_name = response.tool_call.tool
+        parameters = response.tool_call.parameters
+        reasoning = response.reasoning or ""
+
+        if reasoning:
+            logger.info("agent reasoning iter=%d:\n%s", iteration + 1, _truncate_log(reasoning))
+        logger.info(
+            "tool request iter=%d  tool=%r  params=%s",
+            iteration + 1, tool_name, json.dumps(parameters, separators=(",", ":")),
+        )
+        steps.append({"reasoning": reasoning, "tool": tool_name, "parameters": parameters})
 
         tc_id = _new_id("tc")
         result = _run_tool(
@@ -149,7 +270,7 @@ async def invoke(
         messages.append({"role": "user", "content": result_text})
 
     else:
-        # [DO NOT SIMPLIFY] We must log and return cleanly even when the
+        # We must log and return cleanly even when the
         # iteration cap fires. Raising here would lose the partial DB record.
         final_response = "Iteration cap reached without task completion."
         status = "failed"
@@ -177,6 +298,7 @@ async def invoke(
         "status": status,
         "response": final_response,
         "tool_calls": tool_calls_log,
+        "steps": steps,
     }
 
 
@@ -185,15 +307,85 @@ async def invoke(
 # ---------------------------------------------------------------------------
 
 
-def _parse_tool_call(text: str) -> dict | None:
-    """Return the first <tool_call> JSON object found in text, or None."""
-    match = _TOOL_CALL_RE.search(text)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return None
+async def _collect_full_response(
+    messages: list[dict],
+    model: str,
+    api_key: str | None,
+    max_tokens: int | None,
+    iteration: int,
+) -> tuple[AgentResponse, str, float]:
+    """
+    Call the LLM via instructor and, if the response is truncated, retry
+    with a continuation prompt until the model returns a complete structured
+    response or the continuation cap is reached.
+
+    Returns (parsed_response, raw_json_text, total_elapsed_seconds).
+
+    Continuation strategy: when instructor raises IncompleteOutputException
+    (finish_reason='length'), the partial JSON cannot be meaningfully appended
+    to form a valid schema — the chunk boundary may land anywhere inside the
+    JSON object. We therefore ask the model to regenerate from the beginning
+    rather than attempting to merge partial chunks. The continuation turns are
+    kept in a LOCAL copy of the message list; the caller's list is not touched.
+
+    Validation retries (_MAX_VALIDATION_RETRIES) are handled inside instructor
+    itself: on each failed parse it appends the Pydantic error as a user
+    message and re-calls the model, up to max_retries times.
+
+    If the continuation cap is exhausted, IncompleteOutputException is re-raised
+    so invoke() can mark the invocation as failed.
+    """
+    local_messages = list(messages)  # snapshot; continuation turns stay local
+    total_elapsed = 0.0
+
+    kwargs: dict = {
+        "model": model,
+        "messages": local_messages,
+        "response_model": AgentResponse,
+        "max_retries": _MAX_VALIDATION_RETRIES,
+    }
+    if api_key is not None:
+        kwargs["api_key"] = api_key
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+
+    for attempt in range(_MAX_CONTINUATIONS + 1):
+        kwargs["messages"] = local_messages
+        t0 = time.monotonic()
+        try:
+            response: AgentResponse = await _instructor_client.chat.completions.create(
+                **kwargs
+            )
+            total_elapsed += time.monotonic() - t0
+            # Serialize back to JSON for the conversation history. We use
+            # model_dump_json() rather than the raw LLM output string because
+            # instructor may have corrected the model's output during retries.
+            assistant_text = response.model_dump_json()
+            return response, assistant_text, total_elapsed
+
+        except IncompleteOutputException:
+            total_elapsed += time.monotonic() - t0
+            if attempt < _MAX_CONTINUATIONS:
+                logger.warning(
+                    "iter=%d continuation=%d/%d — response truncated "
+                    "(IncompleteOutputException), requesting regeneration",
+                    iteration + 1, attempt + 1, _MAX_CONTINUATIONS,
+                )
+                local_messages.append({
+                    "role": "user",
+                    "content": (
+                        "[CONTINUE] Your previous JSON response was cut off by the "
+                        "token limit. Please regenerate your complete response from "
+                        "the beginning."
+                    ),
+                })
+            else:
+                logger.warning(
+                    "iter=%d continuation cap (%d) reached — response still "
+                    "truncated, giving up",
+                    iteration + 1, _MAX_CONTINUATIONS,
+                )
+                raise
 
 
 def _run_tool(

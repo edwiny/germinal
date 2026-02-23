@@ -1,7 +1,7 @@
 import time
 
-from storage.db import init_db
-from core.event_queue import push_event
+from .storage.db import init_db
+from .core.event_queue import push_event
 
 init_db('./storage/orchestrator.db')
 eid = push_event(
