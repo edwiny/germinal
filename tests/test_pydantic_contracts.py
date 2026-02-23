@@ -9,8 +9,8 @@
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from core.event_queue import EventEnvelope
-from tools.filesystem import (
+from orchestrator.core.event_queue import EventEnvelope
+from orchestrator.tools.filesystem import (
     ReadFileParams,
     ReadFileResult,
     WriteFileParams,
@@ -18,16 +18,16 @@ from tools.filesystem import (
     ListDirectoryParams,
     ListDirectoryResult,
 )
-from tools.git import (
+from orchestrator.tools.git import (
     GitStatusParams,
     GitCommitParams,
     GitCommitResult,
     GitBranchParams,
     GitRollbackParams,
 )
-from tools.notify import NotifyUserParams, NotifyUserResult
-from tools.registry import Tool, ToolRegistry, model_to_json_schema
-from tools.shell import RunTestsParams, RunTestsResult, ShellRunParams
+from orchestrator.tools.notify import NotifyUserParams, NotifyUserResult
+from orchestrator.tools.registry import Tool, ToolRegistry, model_to_json_schema
+from orchestrator.tools.shell import RunTestsParams, RunTestsResult, ShellRunParams
 
 
 # ---------------------------------------------------------------------------

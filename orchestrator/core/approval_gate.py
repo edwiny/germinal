@@ -18,7 +18,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
-from storage.db import get_conn
+from ..storage.db import get_conn
 
 logger = logging.getLogger("approval_gate")
 

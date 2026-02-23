@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.agent_invoker import invoke
-from storage.db import get_conn, init_db
-from tools.filesystem import make_read_file_tool
-from tools.notify import make_notify_user_tool
-from tools.registry import ToolRegistry
+from orchestrator.core.agent_invoker import invoke
+from orchestrator.storage.db import get_conn, init_db
+from orchestrator.tools.filesystem import make_read_file_tool
+from orchestrator.tools.notify import make_notify_user_tool
+from orchestrator.tools.registry import ToolRegistry
 
 
 @pytest.fixture()
@@ -58,7 +58,7 @@ async def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, caplog):
     done_response = _mock_response("Task complete.")
 
     with caplog.at_level(logging.INFO, logger="notify"), patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=[read_response, notify_response, done_response]),
     ):
         result = await invoke(

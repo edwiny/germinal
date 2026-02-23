@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.agent_invoker import invoke
-from storage.db import get_conn, init_db
-from tools.registry import Tool, ToolRegistry, model_to_json_schema
+from orchestrator.core.agent_invoker import invoke
+from orchestrator.storage.db import get_conn, init_db
+from orchestrator.tools.registry import Tool, ToolRegistry, model_to_json_schema
 
 
 class _EchoParams(BaseModel):
@@ -66,7 +66,7 @@ def _mock_response(content: str) -> MagicMock:
 async def test_invocation_row_written_on_completion(tmp_db, registry):
     """A completed invocation must appear in the DB with status 'done'."""
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(return_value=_mock_response("All done, no tools needed.")),
     ):
         result = await invoke(
@@ -98,7 +98,7 @@ async def test_tool_call_executed_and_logged(tmp_db, registry):
     done_response = _mock_response("Done. The echo returned 'hello'.")
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=[tool_response, done_response]),
     ):
         result = await invoke(
@@ -133,7 +133,7 @@ async def test_unknown_tool_returns_error_and_continues(tmp_db, registry):
     done_response = _mock_response("Acknowledged the error. Task complete.")
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(side_effect=[bad_tool_response, done_response]),
     ):
         result = await invoke(
@@ -156,7 +156,7 @@ async def test_iteration_cap_sets_failed_status(tmp_db, registry):
     )
 
     with patch(
-        "core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker.litellm.acompletion",
         new=AsyncMock(return_value=looping_response),
     ):
         result = await invoke(

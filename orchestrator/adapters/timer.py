@@ -15,7 +15,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from core.event_queue import push_event
+from ..core.event_queue import push_event
 
 logger = logging.getLogger("timer")
 

@@ -4,8 +4,8 @@
 
 import pytest
 
-from core.router import UnroutableEvent, route_event
-from storage.db import init_db
+from orchestrator.core.router import UnroutableEvent, route_event
+from orchestrator.storage.db import init_db
 
 
 # Config must include paths.db because the timer tick rule creates a

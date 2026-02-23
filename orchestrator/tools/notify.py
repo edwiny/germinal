@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tools.registry import Tool, model_to_json_schema
+from .registry import Tool, model_to_json_schema
 
 logger = logging.getLogger("notify")
 

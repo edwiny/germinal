@@ -23,10 +23,10 @@ import litellm
 
 logger = logging.getLogger("agent_invoker")
 
-from agents.base_prompt import build_system_prompt
-from core.context_manager import append_to_history, assemble_context, maybe_summarise
-from storage.db import get_conn
-from tools.registry import ToolRegistry
+from ..agents.base_prompt import build_system_prompt
+from .context_manager import append_to_history, assemble_context, maybe_summarise
+from ..storage.db import get_conn
+from ..tools.registry import ToolRegistry
 
 litellm.suppress_debug_info = True
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)

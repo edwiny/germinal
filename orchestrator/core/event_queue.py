@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from storage.db import get_conn
+from ..storage.db import get_conn
 
 
 class EventEnvelope(BaseModel):
