@@ -82,19 +82,16 @@ orchestrator/
 │   ├── base_prompt.py       # Shared system prompt construction
 │   ├── task_agent.py        # General task execution agent
 │   └── dev_agent.py         # Self-improvement / development agent (Phase 5)
-│
-├── tests/
+
+tests/
 │   ├── test_event_queue.py
 │   ├── <other unit tests>
 │   └── integration/
 │       └── <end to end tests>
-│
-├── cli/
-│   └── <cli tools>
-│
-└── scripts/
-    ├── setup.sh             # Install dependencies, initialise DB
-    └── run_tests.sh         # Run full test suite
+
+scripts/
+    ├── <build scripts>
+
 ```
 
 ---

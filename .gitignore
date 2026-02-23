@@ -9,11 +9,10 @@ build/
 .venv/
 
 # Database and logs
-orchestrator/storage/*.db
-orchestrator/logs/
+*.db
 *.db-shm
 *.db-wal
-
+orchestrator/logs/
 
 # Secrets
 orchestrator/.env
@@ -21,3 +20,6 @@ orchestrator/.env
 # Editor
 .DS_Store
 *.swp
+
+# Claude agent
+.claude/
