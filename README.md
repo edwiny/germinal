@@ -1,30 +1,33 @@
 # Germinal - a pure python, lightweight LLM agent
 
+**!!!WARNING!!!** this software can cause damage to your system or introduce security risks. See Risks section below.  **!!!WARNING!!!** 
 
+## Quickstart
 
-## Installing
-
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
+At the moment, Germinal can only be installed from source. Once you've cloned the repo and changed into it, run:
 
 ```sh
 uv sync
 ```
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
-This creates a virtual environment and installs all runtime dependencies.
+This creates a virtual environment and installs all runtime dependencies. 
 
-
-
-## Running
-
-Copy and edit the config file, then run:
+Setup your authentication token on 
 
 ```sh
-cp orchestrator/config.yaml config.yaml
-# edit config.yaml to set your model, paths, etc.
+export OPENROUTER_API_KEY=<TOKEN>
+# or powershell
+$env:OPENROUTER_API_KEY="<TOKEN>"
+
 uv run germ
 ```
 
-The orchestrator reads `config.yaml` from the current working directory by default.
+You can add other models in the config:
+
+```sh
+nano ${HOME}/.config/germinal/config.yaml
+```
 
 
 
@@ -53,4 +56,17 @@ uv build
 
 ## Security
 
-Germinal includes extensible, security validation for tool outputs. The security layer validates all tool results before they are sent to the LLM, using basic sensitive data masking and prompt injection detection.
+Germinal includes extensible security validation for tool outputs.
+
+The security layer validates tool results before they are sent to the LLM, using basic sensitive data masking and prompt injection detection.
+
+Tool use and folder access is configurable via allow lists in the config.
+
+
+## Risks
+
+* The agent can supplement it's tool coverage by writing and executing Python scripts, which may contain bugs or have unintended consequences.
+* Prompt injection.
+* Accidental or unintended mutation of the host operating environment.
+* Exfiltration of your data to 3rd parties.
+* Burning through your token credit balance.

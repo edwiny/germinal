@@ -51,7 +51,6 @@ def make_notify_user_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(NotifyUserParams),
         risk_level="low",
-        allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
         params_model=NotifyUserParams,
     )

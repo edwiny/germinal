@@ -76,7 +76,6 @@ def make_read_file_tool(allowed_paths: list[str]) -> Tool:
         ),
         parameters_schema=model_to_json_schema(ReadFileParams),
         risk_level="low",
-        allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
         params_model=ReadFileParams,
     )
@@ -129,7 +128,6 @@ def make_write_file_tool(allowed_paths: list[str]) -> Tool:
         ),
         parameters_schema=model_to_json_schema(WriteFileParams),
         risk_level="medium",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=WriteFileParams,
     )
@@ -186,7 +184,6 @@ def make_list_directory_tool(allowed_paths: list[str]) -> Tool:
         ),
         parameters_schema=model_to_json_schema(ListDirectoryParams),
         risk_level="low",
-        allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
         params_model=ListDirectoryParams,
     )
