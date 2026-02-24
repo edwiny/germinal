@@ -115,7 +115,6 @@ def make_shell_run_tool(allowlist: list[str]) -> Tool:
         ),
         parameters_schema=model_to_json_schema(ShellRunParams),
         risk_level="high",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=ShellRunParams,
     )
@@ -189,7 +188,6 @@ def make_run_tests_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(RunTestsParams),
         risk_level="low",
-        allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
         params_model=RunTestsParams,
     )

@@ -1,5 +1,7 @@
 models:
   list:
+    # See all the models LiteLLM supports: https://docs.litellm.ai/docs/
+    # Note: the api_key_env value is the name of the environment variable holding the actual key.
     - name: "kimi-k2"
       # OpenRouter model strings use the format: openrouter/<provider>/<model-name>
       # Full list: https://openrouter.ai/models
@@ -40,53 +42,26 @@ models:
         - "plan"
 
 paths:
-  # Paths are evaluated relative to the orchestrator/ working directory.
-  # The parent directory is included so agents can read ARCHITECTURE.md
-  # and CLAUDE.md at the project root.
+  # Paths are evaluated relative to the working directory.
   allowed_read:
     - "./"
-    - "../"
   allowed_write:
     - "./"
-  db: "./storage/orchestrator.db"
+    - "~/.local/germinal/"
+  db: "~/.local/germinal/orchestrator.db"
   logs: "./logs/"
 
 tools:
   shell_allowlist:
     - "pytest"
     - "python"
-    - "git"
-    - "ls"
-    - "cat"
-    - "grep"
+    - "uv"
 
 agents:
   task_agent:
     allowed_tools:
-      - "read_file"
-      - "write_file"
-      - "list_directory"
-      - "git_status"
-      - "git_diff"
-      - "git_add"
-      - "git_commit"
-      - "git_branch"
-      - "git_rollback"
-      - "git_list_branches"
-      - "git_log"
-      - "run_tests"
-      - "lint"
-      - "check_syntax"
-      - "notify_user"
-      - "show_os"
-      - "show_hardware"
-      - "show_ps"
-    max_iterations: 100
-    approval_required_for: ["high"]
-  dev_agent:
-    allowed_tools:
-      - "*"  # Allow all available tools
-    max_iterations: 100
+       - "*"
+    max_iterations: 50
     approval_required_for: ["high"]
 
 approval:
@@ -95,7 +70,7 @@ approval:
 
 logging:
   # DEBUG emits full prompt dumps; INFO is the recommended production level.
-  level: DEBUG
+  level: WARN
 
 security:
   # Enable/disable security validation of tool outputs before sending to LLM

@@ -56,7 +56,6 @@ def registry():
             description="Echo a message back.",
             parameters_schema=model_to_json_schema(_EchoParams),
             risk_level="low",
-            allowed_agents=["task_agent"],
             _execute=echo_execute,
             params_model=_EchoParams,
         )

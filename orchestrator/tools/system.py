@@ -60,12 +60,11 @@ def make_show_os_tool() -> Tool:
     return Tool(
         name="show_os",
         description=(
-            "Return basic operating system and Python environment information "
-            "including OS name, version, architecture, and Python details."
+            "Show operating system information. "
+            "Returns details about the current OS platform, version, and architecture."
         ),
         parameters_schema=model_to_json_schema(ShowOSParams),
         risk_level="low",
-        allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
         params_model=ShowOSParams,
     )
@@ -143,7 +142,6 @@ def make_show_hardware_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(ShowHardwareParams),
         risk_level="low",
-        allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
         params_model=ShowHardwareParams,
     )
@@ -222,7 +220,6 @@ def make_show_ps_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(ShowPSParams),
         risk_level="low",
-        allowed_agents=["task_agent", "dev_agent"],
         _execute=execute,
         params_model=ShowPSParams,
     )

@@ -32,7 +32,6 @@ class Tool:
     description: str
     parameters_schema: dict   # JSON Schema — injected into agent prompts
     risk_level: str           # 'low' | 'medium' | 'high'
-    allowed_agents: list[str]
     _execute: Callable[[dict], dict] = field(repr=False)
     params_model: type[BaseModel] = field(repr=False)
 
