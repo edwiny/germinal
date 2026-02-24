@@ -98,3 +98,70 @@ def test_register_overwrites_existing_name():
     tool2 = _make_tool("dup")
     reg.register(tool2)
     assert reg.get("dup") is tool2
+
+
+def test_make_registry_with_wildcard():
+    """make_registry with "*" in allowed_tools should return all tools."""
+    from orchestrator.agents.task_agent import make_registry
+
+    # Create a full registry with multiple tools
+    full_reg = ToolRegistry()
+    tool1 = _make_tool("tool1")
+    tool2 = _make_tool("tool2")
+    tool3 = _make_tool("tool3")
+    full_reg.register(tool1)
+    full_reg.register(tool2)
+    full_reg.register(tool3)
+
+    # Config with "*" wildcard
+    config = {
+        "agents": {
+            "test_agent": {
+                "allowed_tools": ["*"]
+            }
+        }
+    }
+
+    # Should return the full registry
+    filtered_reg = make_registry(full_reg, config, "test_agent")
+    assert filtered_reg is full_reg  # Should return the same registry object
+
+    # Verify all tools are available
+    assert filtered_reg.get("tool1") is tool1
+    assert filtered_reg.get("tool2") is tool2
+    assert filtered_reg.get("tool3") is tool3
+
+
+def test_make_registry_with_specific_tools():
+    """make_registry with specific tool names should filter correctly."""
+    from orchestrator.agents.task_agent import make_registry
+
+    # Create a full registry with multiple tools
+    full_reg = ToolRegistry()
+    tool1 = _make_tool("tool1")
+    tool2 = _make_tool("tool2")
+    tool3 = _make_tool("tool3")
+    full_reg.register(tool1)
+    full_reg.register(tool2)
+    full_reg.register(tool3)
+
+    # Config with specific tools
+    config = {
+        "agents": {
+            "test_agent": {
+                "allowed_tools": ["tool1", "tool3"]
+            }
+        }
+    }
+
+    # Should return filtered registry
+    filtered_reg = make_registry(full_reg, config, "test_agent")
+    assert filtered_reg is not full_reg  # Should be a different registry object
+
+    # Verify only specified tools are available
+    assert filtered_reg.get("tool1") is tool1
+    assert filtered_reg.get("tool3") is tool3
+
+    # tool2 should not be available
+    with pytest.raises(KeyError):
+        filtered_reg.get("tool2")

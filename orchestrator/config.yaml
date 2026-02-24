@@ -85,24 +85,7 @@ agents:
     approval_required_for: ["high"]
   dev_agent:
     allowed_tools:
-      - "read_file"
-      - "write_file"
-      - "list_directory"
-      - "git_status"
-      - "git_diff"
-      - "git_add"
-      - "git_commit"
-      - "git_branch"
-      - "git_rollback"
-      - "git_list_branches"
-      - "git_log"
-      - "run_tests"
-      - "lint"
-      - "check_syntax"
-      - "notify_user"
-      - "show_os"
-      - "show_hardware"
-      - "show_ps"
+      - "*"  # Allow all available tools
     max_iterations: 100
     approval_required_for: ["high"]
 

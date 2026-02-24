@@ -197,12 +197,12 @@ def agent_registry_for(agent_type: str, full_registry: ToolRegistry, config: dic
     """
     Return a ToolRegistry scoped to the tools allowed for agent_type.
 
-    Only task_agent has a dedicated make_registry() helper in Phase 1.
+    Supports "*" wildcard in allowed_tools to include all available tools.
     Unknown agent types fall back to the full registry rather than crashing
     the loop — a future phase will add per-agent builders for dev_agent etc.
     """
-    if agent_type == task_agent_mod.AGENT_TYPE:
-        return task_agent_mod.make_registry(full_registry, config)
+    if agent_type in config.get("agents", {}):
+        return task_agent_mod.make_registry(full_registry, config, agent_type)
     # Fallback: unknown agent gets the full registry.
     # [DO NOT REMOVE] This allows new agent types to work immediately when
     # their routing rules are added, before their registry helpers are written.
