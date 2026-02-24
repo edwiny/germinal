@@ -16,11 +16,11 @@ import logging
 import sys
 
 from .core.agent_invoker import invoke
+from .core.config import config
 from .core.context_manager import ensure_project
 from .main_loop import (
     agent_registry_for,
     build_full_registry,
-    load_config,
     make_approval_gate,
     select_model,
     setup_logging,
@@ -45,8 +45,6 @@ async def run_interactive(prompt: str | None) -> None:
 
     Logging goes to stderr so stdout carries only the agent's response.
     """
-    config = load_config()
-
     # Redirect logging to stderr so the agent's stdout response is clean.
     # setup_logging in main_loop writes to sys.stdout by default; we override
     # the handler here before any logger is used.

@@ -1,4 +1,4 @@
-# Purpose: Code quality tools: lint (ruff/flake8) and check_syntax (py_compile).
+# Purpose: Code quality tools: lint (ruff) and check_syntax (py_compile).
 # Relationships: Registered into tools/registry.py via make_* factories;
 #               called by dev_agent through core/agent_invoker.py.
 
@@ -35,17 +35,13 @@ class LintResult(BaseModel):
     stderr: str = Field(description="Standard error from the linter.")
     returncode: int = Field(description="Return code from the linter.")
     passed: bool = Field(description="True if the linter reported no issues (returncode 0).")
-    tool_used: str = Field(description="Which linter was invoked: 'ruff' or 'flake8'.")
+    tool_used: str = Field(description="The linter tool that was used ('ruff' or 'flake8').")
 
 
 def make_lint_tool() -> Tool:
     """
-    Return a lint tool that runs ruff, falling back to flake8.
+    Return a lint tool that runs ruff.
 
-    # ruff is tried first because it is significantly faster and covers both
-    # style and correctness checks. flake8 is the fallback for environments
-    # where only flake8 is installed. If neither is found, an error dict is
-    # returned — the tool never raises.
     """
 
     def execute(params: dict) -> dict:
@@ -72,26 +68,29 @@ def make_lint_tool() -> Tool:
                 tool_used="ruff",
             ).model_dump()
         except FileNotFoundError:
-            pass  # ruff not available; fall through to flake8
-
-        # Fall back to flake8 (fix flag is silently ignored — flake8 has no auto-fix).
-        try:
-            proc = subprocess.run(
-                ["flake8", path],
-                capture_output=True,
-                text=True,
-                timeout=_LINT_TIMEOUT,
-                shell=False,
-            )
-            return LintResult(
-                stdout=proc.stdout,
-                stderr=proc.stderr,
-                returncode=proc.returncode,
-                passed=proc.returncode == 0,
-                tool_used="flake8",
-            ).model_dump()
-        except FileNotFoundError:
-            return {"error": "Neither ruff nor flake8 found in PATH"}
+            # Try flake8 as fallback
+            flake8_cmd = ["flake8", path]
+            try:
+                proc = subprocess.run(
+                    flake8_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=_LINT_TIMEOUT,
+                    shell=False,
+                )
+                return LintResult(
+                    stdout=proc.stdout,
+                    stderr=proc.stderr,
+                    returncode=proc.returncode,
+                    passed=proc.returncode == 0,
+                    tool_used="flake8",
+                ).model_dump()
+            except FileNotFoundError:
+                return {"error": "Neither ruff nor flake8 found in PATH"}
+            except subprocess.TimeoutExpired:
+                return {"error": f"Linter timed out after {_LINT_TIMEOUT}s"}
+            except Exception as exc:
+                return {"error": str(exc)}
         except subprocess.TimeoutExpired:
             return {"error": f"Linter timed out after {_LINT_TIMEOUT}s"}
         except Exception as exc:
@@ -100,13 +99,12 @@ def make_lint_tool() -> Tool:
     return Tool(
         name="lint",
         description=(
-            "Run ruff (or flake8 if ruff is unavailable) on a file or directory. "
+            "Run ruff on a file or directory. "
             "Set fix=true to auto-fix safe issues with ruff. "
             "Returns passed=true if no issues were found."
         ),
         parameters_schema=model_to_json_schema(LintParams),
         risk_level="low",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=LintParams,
     )
@@ -170,7 +168,6 @@ def make_check_syntax_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(CheckSyntaxParams),
         risk_level="low",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=CheckSyntaxParams,
     )

@@ -21,13 +21,12 @@ import signal
 import sys
 from pathlib import Path
 
-import yaml
-
 from .adapters import timer as timer_adapter
 from .adapters.network import NetworkAdapter
 from .agents import task_agent as task_agent_mod
 from .core.agent_invoker import invoke
 from .core.approval_gate import request_approval
+from .core.config import config
 from .core.context_manager import ensure_project
 from .core.event_queue import (
     complete_event,
@@ -74,19 +73,7 @@ def setup_logging(level: str) -> None:
     logging.basicConfig(level=level.upper(), handlers=[handler])
 
 
-_DEFAULT_CONFIG = Path.home() / ".config" / "germinal" / "config.yaml"
 
-
-def load_config(path: str | None = None) -> dict:
-    # Resolve config path: explicit arg > ~/.config/germinal/config.yaml > local fallback.
-    # The local fallback exists so 'python -m orchestrator' works from the repo
-    # root during development without requiring a prior 'germ' run to seed the
-    # user config.
-    resolved = Path(path) if path else _DEFAULT_CONFIG
-    if not resolved.exists():
-        resolved = Path("config.yaml")
-    with open(resolved) as f:
-        return yaml.safe_load(f)
 
 
 def build_full_registry(config: dict, db_path: str) -> ToolRegistry:
@@ -310,7 +297,6 @@ def _resolve_pending(pending_http: dict, event_id: str, result: dict) -> None:
 
 
 async def main() -> None:
-    config = load_config()
     setup_logging(config.get("logging", {}).get("level", "INFO"))
 
     logger_main = logging.getLogger("main")

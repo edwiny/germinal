@@ -313,7 +313,6 @@ async def test_high_risk_tool_approved_executes(tmp_db):
         description="Test-only high-risk operation.",
         parameters_schema=model_to_json_schema(_DangerousOpParams),
         risk_level="high",
-        allowed_agents=["task_agent"],
         _execute=_high_risk_execute,
         params_model=_DangerousOpParams,
     )
@@ -358,7 +357,6 @@ async def test_high_risk_tool_denied_returns_error(tmp_db):
         description="Test-only high-risk operation.",
         parameters_schema=model_to_json_schema(_DangerousOpParams),
         risk_level="high",
-        allowed_agents=["task_agent"],
         _execute=_high_risk_execute,
         params_model=_DangerousOpParams,
     )
