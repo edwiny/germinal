@@ -12,15 +12,21 @@ from ..tools.registry import ToolRegistry
 AGENT_TYPE = "task_agent"
 
 
-def make_registry(full_registry: ToolRegistry, config: dict) -> ToolRegistry:
+def make_registry(full_registry: ToolRegistry, config: dict, agent_type: str = AGENT_TYPE) -> ToolRegistry:
     """
-    Return a ToolRegistry filtered to the tools allowed for task_agent.
+    Return a ToolRegistry filtered to the tools allowed for the specified agent.
 
+    If "*" is in the allowed_tools list, all available tools are included.
     Tools not yet registered (e.g. if a tool is in the config but its
     make_* factory was not called at startup) are silently skipped.
     This allows the config to list future tools without crashing the loop.
     """
-    allowed_names: list[str] = config["agents"]["task_agent"]["allowed_tools"]
+    allowed_names: list[str] = config["agents"][agent_type]["allowed_tools"]
+
+    # If "*" is in the allowed tools, include all tools
+    if "*" in allowed_names:
+        return full_registry
+
     filtered = ToolRegistry()
     for name in allowed_names:
         try:

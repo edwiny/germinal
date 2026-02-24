@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from orchestrator.core.agent_invoker import invoke
+from orchestrator.core.agent_invoker import invoke, AgentResponse, ToolCallRequest
 from orchestrator.storage.db import get_conn, init_db
 from orchestrator.tools.filesystem import make_read_file_tool
 from orchestrator.tools.notify import make_notify_user_tool
@@ -30,10 +30,26 @@ def tmp_file(tmp_path):
     return str(f), str(tmp_path)
 
 
-def _mock_response(content: str) -> MagicMock:
-    r = MagicMock()
-    r.choices[0].message.content = content
-    return r
+def _mock_response(content: str) -> AgentResponse:
+    """Build a mock AgentResponse from content that may contain tool calls."""
+    import re
+    
+    # Check if content contains a tool_call block
+    tool_call_match = re.search(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', content, re.DOTALL)
+    if tool_call_match:
+        tool_call_json = tool_call_match.group(1)
+        tool_call_data = json.loads(tool_call_json)
+        tool_call = ToolCallRequest(
+            tool=tool_call_data["tool"],
+            parameters=tool_call_data["parameters"]
+        )
+        # Remove the tool_call block from reasoning
+        reasoning = re.sub(r'<tool_call>.*?</tool_call>', '', content, flags=re.DOTALL).strip()
+    else:
+        tool_call = None
+        reasoning = content
+    
+    return AgentResponse(reasoning=reasoning, tool_call=tool_call)
 
 
 async def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, caplog):
@@ -59,7 +75,7 @@ async def test_end_to_end_read_file_and_notify(tmp_db, tmp_file, caplog):
     done_response = _mock_response("Task complete.")
 
     with caplog.at_level(logging.INFO, logger="notify"), patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(side_effect=[read_response, notify_response, done_response]),
     ):
         result = await invoke(

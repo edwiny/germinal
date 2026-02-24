@@ -56,6 +56,7 @@ from .tools.git import (
 from .tools.notify import make_notify_user_tool
 from .tools.registry import ToolRegistry
 from .tools.shell import make_run_tests_tool, make_shell_run_tool
+from .tools.system import make_show_os_tool, make_show_hardware_tool, make_show_ps_tool
 
 # Poll interval when the event queue is empty. 500ms balances responsiveness
 # against unnecessary CPU spin. Do not set below ~100ms on SQLite.
@@ -118,10 +119,13 @@ def build_full_registry(config: dict, db_path: str) -> ToolRegistry:
     registry.register(make_git_log_tool())
     registry.register(make_lint_tool())
     registry.register(make_check_syntax_tool())
+    registry.register(make_show_os_tool())
+    registry.register(make_show_hardware_tool())
+    registry.register(make_show_ps_tool())
     return registry
 
 
-def _select_model(config: dict, model_key: str) -> tuple[str, str | None, int | None]:
+def select_model(config: dict, model_key: str) -> tuple[str, str | None, int | None]:
     """
     Resolve model_key → (litellm model string, api_key | None, max_tokens | None).
 
@@ -160,7 +164,7 @@ def _select_model(config: dict, model_key: str) -> tuple[str, str | None, int | 
     return entry["model"], api_key, max_tokens
 
 
-def _make_approval_gate(db_path: str):
+def make_approval_gate(db_path: str):
     """
     Return a closure that matches the approval_gate callable signature
     expected by core/agent_invoker.py.
@@ -189,16 +193,16 @@ def _make_approval_gate(db_path: str):
     return gate
 
 
-def _agent_registry(agent_type: str, full_registry: ToolRegistry, config: dict) -> ToolRegistry:
+def agent_registry_for(agent_type: str, full_registry: ToolRegistry, config: dict) -> ToolRegistry:
     """
     Return a ToolRegistry scoped to the tools allowed for agent_type.
 
-    Only task_agent has a dedicated make_registry() helper in Phase 1.
+    Supports "*" wildcard in allowed_tools to include all available tools.
     Unknown agent types fall back to the full registry rather than crashing
     the loop — a future phase will add per-agent builders for dev_agent etc.
     """
-    if agent_type == task_agent_mod.AGENT_TYPE:
-        return task_agent_mod.make_registry(full_registry, config)
+    if agent_type in config.get("agents", {}):
+        return task_agent_mod.make_registry(full_registry, config, agent_type)
     # Fallback: unknown agent gets the full registry.
     # [DO NOT REMOVE] This allows new agent types to work immediately when
     # their routing rules are added, before their registry helpers are written.
@@ -262,8 +266,8 @@ async def _event_loop(
         # use {payload[agent_type]} in its task_template and set agent_type
         # from the payload; until that rule exists, fall back to routing result.
         agent_type = routing["agent_type"]
-        model, api_key, max_tokens = _select_model(config, routing["model_key"])
-        agent_reg = _agent_registry(agent_type, full_registry, config)
+        model, api_key, max_tokens = select_model(config, routing["model_key"])
+        agent_reg = agent_registry_for(agent_type, full_registry, config)
         max_iter = config.get("agents", {}).get(agent_type, {}).get("max_iterations", 10)
 
         try:
@@ -320,7 +324,7 @@ async def main() -> None:
         logger_main.info("Reset %d stale event(s) to 'pending'.", stale)
 
     full_registry = build_full_registry(config, db_path)
-    approval_gate = _make_approval_gate(db_path)
+    approval_gate = make_approval_gate(db_path)
 
     # Shared dict: event_id → asyncio.Future. The network adapter writes futures
     # here; the event loop resolves them after invoke() completes.
