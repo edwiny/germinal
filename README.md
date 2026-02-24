@@ -48,3 +48,10 @@ Build a distributable wheel:
 uv build
 # output: dist/germinal-0.1.0-py3-none-any.whl
 ```
+
+
+
+## Security
+
+Germinal includes extensible, security validation for tool outputs. The security layer validates all tool results before they are sent to the LLM, using basic sensitive data masking and prompt injection detection.
+

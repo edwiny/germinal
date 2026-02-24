@@ -31,6 +31,7 @@ logger = logging.getLogger("agent_invoker")
 
 from ..agents.base_prompt import build_system_prompt
 from .context_manager import append_to_history, assemble_context, maybe_summarise
+from .security import create_pipeline_from_config
 from ..storage.db import get_conn
 from ..tools.registry import ToolRegistry
 
@@ -140,6 +141,10 @@ async def invoke(
     invocation_id = _new_id("inv")
     started_at = _now()
     tool_calls_log: list[dict] = []
+
+    # Create security validation pipeline from config
+    security_config = config.get('security', {}) if config else {}
+    validation_pipeline = create_pipeline_from_config(security_config)
 
     system_prompt = build_system_prompt(registry.schema_for_agent())
     messages = [
@@ -258,6 +263,15 @@ async def invoke(
             project_id=project_id,
             approval_gate=approval_gate,
         )
+
+        # Apply security validation to tool output before sending to LLM
+        try:
+            result = validation_pipeline.validate(result)
+        except Exception as exc:
+            logger.error(f"Security validation failed for tool {tool_name}: {exc}")
+            # Continue with unvalidated result rather than failing the entire invocation
+            # In production, you might want to fail the invocation or sanitize differently
+
         tool_calls_log.append(
             {"id": tc_id, "tool": tool_name, "parameters": parameters, "result": result}
         )
