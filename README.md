@@ -68,4 +68,5 @@ Tool use and folder access is configurable via allow lists in the config.
 * The agent can supplement it's tool coverage by writing and executing Python scripts, which may contain bugs or have unintended consequences.
 * Prompt injection.
 * Accidental or unintended mutation of the host operating environment.
+* Exfiltration of your data to 3rd parties.
 * Burning through your token credit balance.

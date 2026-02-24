@@ -35,6 +35,7 @@ class LintResult(BaseModel):
     stderr: str = Field(description="Standard error from the linter.")
     returncode: int = Field(description="Return code from the linter.")
     passed: bool = Field(description="True if the linter reported no issues (returncode 0).")
+    tool_used: str = Field(description="The linter tool that was used ('ruff' or 'flake8').")
 
 
 def make_lint_tool() -> Tool:
@@ -64,9 +65,32 @@ def make_lint_tool() -> Tool:
                 stderr=proc.stderr,
                 returncode=proc.returncode,
                 passed=proc.returncode == 0,
+                tool_used="ruff",
             ).model_dump()
         except FileNotFoundError:
-            return {"error": "ruff not found in PATH"}
+            # Try flake8 as fallback
+            flake8_cmd = ["flake8", path]
+            try:
+                proc = subprocess.run(
+                    flake8_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=_LINT_TIMEOUT,
+                    shell=False,
+                )
+                return LintResult(
+                    stdout=proc.stdout,
+                    stderr=proc.stderr,
+                    returncode=proc.returncode,
+                    passed=proc.returncode == 0,
+                    tool_used="flake8",
+                ).model_dump()
+            except FileNotFoundError:
+                return {"error": "Neither ruff nor flake8 found in PATH"}
+            except subprocess.TimeoutExpired:
+                return {"error": f"Linter timed out after {_LINT_TIMEOUT}s"}
+            except Exception as exc:
+                return {"error": str(exc)}
         except subprocess.TimeoutExpired:
             return {"error": f"Linter timed out after {_LINT_TIMEOUT}s"}
         except Exception as exc:
