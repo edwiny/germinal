@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from orchestrator.core.agent_invoker import invoke
+from orchestrator.core.agent_invoker import invoke, AgentResponse, ToolCallRequest
 from orchestrator.storage.db import get_conn, init_db
 from orchestrator.tools.filesystem import make_read_file_tool, make_write_file_tool
 from orchestrator.tools.notify import make_notify_user_tool
@@ -63,11 +63,26 @@ def registry(tmp_dir, tmp_db):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _resp(content: str) -> MagicMock:
-    """Build a mock LiteLLM completion response."""
-    r = MagicMock()
-    r.choices[0].message.content = content
-    return r
+def _resp(content: str) -> AgentResponse:
+    """Build a mock AgentResponse from content that may contain tool calls."""
+    import re
+    
+    # Check if content contains a tool_call block
+    tool_call_match = re.search(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', content, re.DOTALL)
+    if tool_call_match:
+        tool_call_json = tool_call_match.group(1)
+        tool_call_data = json.loads(tool_call_json)
+        tool_call = ToolCallRequest(
+            tool=tool_call_data["tool"],
+            parameters=tool_call_data["parameters"]
+        )
+        # Remove the tool_call block from reasoning
+        reasoning = re.sub(r'<tool_call>.*?</tool_call>', '', content, flags=re.DOTALL).strip()
+    else:
+        tool_call = None
+        reasoning = content
+    
+    return AgentResponse(reasoning=reasoning, tool_call=tool_call)
 
 
 def _tool_call_block(tool: str, parameters: dict) -> str:
@@ -78,7 +93,7 @@ def _tool_call_block(tool: str, parameters: dict) -> str:
 async def _run(task: str, responses: list, reg: ToolRegistry, db: str, approval_gate=None) -> dict:
     """Thin wrapper around invoke() with LiteLLM mocked."""
     with patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(side_effect=responses),
     ):
         return await invoke(
@@ -444,7 +459,7 @@ async def test_iteration_cap_sets_failed_status(registry, tmp_db, tmp_dir):
     ]
 
     with patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(side_effect=responses),
     ):
         result = await invoke(

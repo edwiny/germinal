@@ -17,6 +17,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from orchestrator.adapters.network import NetworkAdapter
+from orchestrator.core.agent_invoker import AgentResponse, ToolCallRequest
 from orchestrator.main_loop import _event_loop
 from orchestrator.storage.db import get_conn, init_db
 from orchestrator.tools.notify import make_notify_user_tool
@@ -28,11 +29,26 @@ from orchestrator.tools.registry import ToolRegistry
 # ---------------------------------------------------------------------------
 
 
-def _llm(content: str) -> MagicMock:
-    """Build a minimal litellm-shaped response mock."""
-    r = MagicMock()
-    r.choices[0].message.content = content
-    return r
+def _llm(content: str) -> AgentResponse:
+    """Build a mock AgentResponse from content that may contain tool calls."""
+    import re
+    
+    # Check if content contains a tool_call block
+    tool_call_match = re.search(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', content, re.DOTALL)
+    if tool_call_match:
+        tool_call_json = tool_call_match.group(1)
+        tool_call_data = json.loads(tool_call_json)
+        tool_call = ToolCallRequest(
+            tool=tool_call_data["tool"],
+            parameters=tool_call_data["parameters"]
+        )
+        # Remove the tool_call block from reasoning
+        reasoning = re.sub(r'<tool_call>.*?</tool_call>', '', content, flags=re.DOTALL).strip()
+    else:
+        tool_call = None
+        reasoning = content
+    
+    return AgentResponse(reasoning=reasoning, tool_call=tool_call)
 
 
 def _parse_sse(raw: str) -> list[dict]:
@@ -200,7 +216,7 @@ async def test_non_streaming_returns_agent_response(system):
     client, db_path = system
 
     with patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(return_value=_llm("The answer is 42.")),
     ):
         resp = await client.post(
@@ -238,7 +254,7 @@ async def test_model_field_is_ignored_routing_uses_default(system):
     client, _ = system
 
     with patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(return_value=_llm("Still works.")),
     ):
         resp = await client.post(
@@ -261,7 +277,7 @@ async def test_multiple_sequential_requests(system):
     client, db_path = system
 
     with patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(side_effect=[_llm("First."), _llm("Second.")]),
     ):
         resp1 = await client.post(
@@ -295,7 +311,7 @@ async def test_streaming_returns_sse_content_type(system):
     client, _ = system
 
     with patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(return_value=_llm("Streamed.")),
     ):
         resp = await client.post(
@@ -321,7 +337,7 @@ async def test_streaming_sse_structure(system):
     client, _ = system
 
     with patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(return_value=_llm("Hello from the agent.")),
     ):
         resp = await client.post(
@@ -378,7 +394,7 @@ async def test_agent_tool_call_executed_before_final_response(system, caplog):
     final_turn = _llm("Done. Notification delivered.")
 
     with caplog.at_level(logging.INFO, logger="notify"), patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(side_effect=[tool_turn, final_turn]),
     ):
         resp = await client.post(
@@ -420,7 +436,7 @@ async def test_http_event_marked_done_in_db_after_response(system):
     client, db_path = system
 
     with patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(return_value=_llm("OK")),
     ):
         resp = await client.post(
@@ -492,7 +508,7 @@ async def test_server_remains_healthy_after_error(system):
 
     # Server must still respond correctly.
     with patch(
-        "orchestrator.core.agent_invoker.litellm.acompletion",
+        "orchestrator.core.agent_invoker._instructor_client.chat.completions.create",
         new=AsyncMock(return_value=_llm("Still alive.")),
     ):
         resp = await client.post(
