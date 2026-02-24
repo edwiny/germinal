@@ -58,7 +58,6 @@ def _make_pydantic_tool(name="echo_pydantic") -> Tool:
         description="Echo via Pydantic.",
         parameters_schema=model_to_json_schema(_EchoParams),
         risk_level="low",
-        allowed_agents=["task_agent"],
         _execute=_execute,
         params_model=_EchoParams,
     )

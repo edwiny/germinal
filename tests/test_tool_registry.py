@@ -1,6 +1,6 @@
 # Purpose: Tests for tools/registry.py.
 # Covers: parameter validation before execute, unknown tool error,
-#         schema_for_agent output format, allowed_agents list.
+#         schema_for_agent output format.
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,10 +13,8 @@ class _EchoParams(BaseModel):
     message: str = Field(description="Message to echo.")
 
 
-def _make_tool(name="echo", risk_level="low", allowed_agents=None) -> Tool:
+def _make_tool(name="echo", risk_level="low") -> Tool:
     """Return a minimal test tool backed by a Pydantic params model."""
-    if allowed_agents is None:
-        allowed_agents = ["task_agent"]
 
     def _execute(params: dict) -> dict:
         return {"echoed": params.get("message", "")}
@@ -26,7 +24,6 @@ def _make_tool(name="echo", risk_level="low", allowed_agents=None) -> Tool:
         description="Echo a message.",
         parameters_schema=model_to_json_schema(_EchoParams),
         risk_level=risk_level,
-        allowed_agents=allowed_agents,
         _execute=_execute,
         params_model=_EchoParams,
     )

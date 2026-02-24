@@ -82,7 +82,6 @@ def make_git_status_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(GitStatusParams),
         risk_level="low",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=GitStatusParams,
     )
@@ -127,7 +126,6 @@ def make_git_commit_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(GitCommitParams),
         risk_level="medium",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=GitCommitParams,
     )
@@ -181,7 +179,6 @@ def make_git_branch_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(GitBranchParams),
         risk_level="medium",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=GitBranchParams,
     )
@@ -242,7 +239,6 @@ def make_git_rollback_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(GitRollbackParams),
         risk_level="high",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=GitRollbackParams,
     )
@@ -277,7 +273,6 @@ def make_git_diff_tool() -> Tool:
         description="Show the full diff of working tree changes against HEAD.",
         parameters_schema=model_to_json_schema(GitDiffParams),
         risk_level="low",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=GitDiffParams,
     )
@@ -326,7 +321,6 @@ def make_git_add_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(GitAddParams),
         risk_level="medium",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=GitAddParams,
     )
@@ -379,7 +373,6 @@ def make_git_list_branches_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(GitListBranchesParams),
         risk_level="low",
-        allowed_agents=["dev_agent", "task_agent"],
         _execute=execute,
         params_model=GitListBranchesParams,
     )
@@ -424,7 +417,6 @@ def make_git_log_tool() -> Tool:
         ),
         parameters_schema=model_to_json_schema(GitLogParams),
         risk_level="low",
-        allowed_agents=["dev_agent"],
         _execute=execute,
         params_model=GitLogParams,
     )
