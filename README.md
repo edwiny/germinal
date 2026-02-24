@@ -54,4 +54,3 @@ uv build
 ## Security
 
 Germinal includes extensible, security validation for tool outputs. The security layer validates all tool results before they are sent to the LLM, using basic sensitive data masking and prompt injection detection.
-

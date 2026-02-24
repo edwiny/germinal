@@ -78,6 +78,9 @@ agents:
       - "lint"
       - "check_syntax"
       - "notify_user"
+      - "show_os"
+      - "show_hardware"
+      - "show_ps"
     max_iterations: 100
     approval_required_for: ["high"]
   dev_agent:
@@ -97,6 +100,9 @@ agents:
       - "lint"
       - "check_syntax"
       - "notify_user"
+      - "show_os"
+      - "show_hardware"
+      - "show_ps"
     max_iterations: 100
     approval_required_for: ["high"]
 
