@@ -36,6 +36,11 @@ from .core.event_queue import (
 )
 from .core.router import UnroutableEvent, route_event
 from .storage.db import init_db
+from .tools.content_access import (
+    make_get_content_info_tool,
+    make_read_content_range_tool,
+    make_search_content_tool,
+)
 from .tools.filesystem import (
     make_list_directory_tool,
     make_read_file_tool,
@@ -109,6 +114,12 @@ def build_full_registry(config: dict, db_path: str) -> ToolRegistry:
     registry.register(make_show_os_tool())
     registry.register(make_show_hardware_tool())
     registry.register(make_show_ps_tool())
+
+    # Content access tools for large piped input
+    registry.register(make_read_content_range_tool())
+    registry.register(make_search_content_tool())
+    registry.register(make_get_content_info_tool())
+
     return registry
 
 

@@ -87,6 +87,13 @@ context:
   summary_tokens: 1000
   brief_tokens: 500
 
+input:
+  # Limits for piped input in oneshot mode (e.g., cat file | germ "analyze this")
+  max_file_size_mb: 100
+  max_tokens_estimate: 200000  # Conservative limit below typical 250k context windows
+  large_file_threshold_mb: 10   # Files above this size trigger warnings
+  enable_content_tools: true    # Allow tools to access large content incrementally
+
 projects:
   # All events without an explicit project_id accumulate history here.
   # Set to null to disable automatic project assignment.
